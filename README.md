@@ -86,16 +86,25 @@ cd /root/pubsub-voting-website && ./node_modules/.bin/tsc -p tsconfig.seeder.jso
 
 The seeder logs connection open/close, contest-topic subscribe/unsubscribe, gossip
 messages on the topic, checkpoint (root record) fetch serves, and tally updates — to
-stdout (journald) and to `seeder-data/seeder.log` (rotated once at 10 MB).
+stdout (journald) and to `seeder-data/seeder.log` (rotated once at 10 MB). Gossip
+messages and served root records are logged **decoded** ([shared/wire-log.ts](shared/wire-log.ts)),
+not just as byte counts: a root record line shows `count` (vote bundles), checkpoint
+size, and the full root CID. `0 vote bundle(s)` means the contest is genuinely empty —
+82 bytes with root `bafyreie3lvfqun…` is the canonical empty record, not a load
+failure. Comparing root CIDs across peers' log lines settles any divergence question:
+a peer that hears a root differing from its own answers with its own record within
+seconds, so matching roots everywhere ⇒ the whole topic shares one state. The website
+logs the same decoded lines (plus its `tally update`) in the on-page log.
 
 Do **not** delete `seeder-data/peer.key`: the peer id determines the
 `….libp2p.direct` hostname and the multiaddr baked into `src/config.ts`.
 
-**Vote state is memory-only on the seeder.** The CRDT lives in the process (the
-`seeder-data/voting` dir only holds LRU caches), so a restart empties the tally until
-an online browser peer re-advertises its checkpoint (root-record heartbeat, ≤ ~12.5
-min) and the seeder chases it back. Restarting while **no** voter tab is open loses
-the votes permanently.
+**Vote state survives restarts** (pubsub-voting ≥ 0.0.10): the seeder persists its
+checkpoint snapshot to `seeder-data/voting/checkpoints.db` (debounced after each
+winner-set change, flushed on SIGTERM) and restores it at join; browser tabs persist
+theirs to IndexedDB (`pubsub-voting-checkpoints`). Historical note: the one vote cast
+before the 0.0.10 deploy (2026-07-16) was permanently lost by a seeder restart —
+builds of that era held the CRDT in memory only.
 
 ### Diagnosing "I don't see votes"
 

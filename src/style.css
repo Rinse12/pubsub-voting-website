@@ -98,10 +98,11 @@ td .status-pending { color: var(--warn); }
 .badge-ok { color: var(--ok); }
 .badge-bad { color: var(--bad); }
 
-#criteria-details { margin-top: 0.75rem; }
-#criteria-details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; }
-#criteria-details summary:hover { color: var(--text); }
-#criteria-json {
+#criteria-details, #bundles-details { margin-top: 0.75rem; }
+#criteria-details summary, #bundles-details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; }
+#criteria-details summary:hover, #bundles-details summary:hover { color: var(--text); }
+#criteria-json,
+#bundles-json {
     background: #10131a;
     border-radius: 8px;
     padding: 0.75rem;

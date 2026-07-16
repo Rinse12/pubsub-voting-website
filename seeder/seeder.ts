@@ -22,6 +22,7 @@ import { criteria } from "../shared/criteria.js";
 import { customRules } from "../shared/erc20-balance-rule.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
+import { describeGossipMessage, describeRootRecord } from "../shared/wire-log.js";
 
 /**
  * The always-on seeder: a publicly reachable Node.js Helia node that joins the contest
@@ -182,7 +183,9 @@ async function main() {
     pubsub.addEventListener("message", (evt) => {
         if (evt.detail.topic !== topic) return;
         const from = "from" in evt.detail ? evt.detail.from.toString() : "(unsigned)";
-        log(`gossip message on topic: ${evt.detail.data.length} bytes from ${from}`);
+        void describeGossipMessage(evt.detail.data).then((described) =>
+            log(`gossip from ${from}: ${described} (${evt.detail.data.length} bytes)`)
+        );
     });
     // The fetch protocol has no serve event, so wrap lookup registration: each cold joiner
     // pulling the checkpoint root record shows up as one "fetch serve" line.
@@ -191,7 +194,10 @@ async function main() {
     fetchSvc.registerLookupFunction = (prefix, lookup) => {
         realRegister(prefix, async (key) => {
             const value = await lookup(key);
-            log(`fetch serve: ${new TextDecoder().decode(key)} → ${value === undefined ? "no value" : `${value.length} bytes`}`);
+            log(
+                `fetch serve: ${new TextDecoder().decode(key)} → ` +
+                    (value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`)
+            );
             return value;
         });
     };
