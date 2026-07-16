@@ -98,6 +98,16 @@ td .status-pending { color: var(--warn); }
 .badge-ok { color: var(--ok); }
 .badge-bad { color: var(--bad); }
 
+#wallet-error {
+    color: var(--bad);
+    background: rgba(239, 91, 91, 0.12);
+    border: 1px solid var(--bad);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+    margin: 0.75rem 0 0;
+}
+
 #criteria-details, #bundles-details { margin-top: 0.75rem; }
 #criteria-details summary, #bundles-details summary { cursor: pointer; color: var(--muted); font-size: 0.88rem; }
 #criteria-details summary:hover, #bundles-details summary:hover { color: var(--text); }

@@ -141,6 +141,7 @@ function renderTally() {
 }
 
 function renderWallet(address: `0x${string}`) {
+    $("wallet-error").hidden = true;
     $("connect-btn").textContent = "Reconnect wallet";
     $("wallet-info").hidden = false;
     $("wallet-address").textContent = address;
@@ -152,10 +153,20 @@ function renderWallet(address: `0x${string}`) {
 }
 
 /* ---------- voting ---------- */
+function showWalletError(message: string) {
+    const el = $("wallet-error");
+    el.textContent = message;
+    el.hidden = false;
+    $("wallet-card").scrollIntoView({ behavior: "smooth", block: "center" });
+    log(message);
+}
+
 async function castVote(votes: Vote[]) {
     if (publishing) return;
     if (!signer.connectedAddress) {
-        log("Connect a wallet first (or generate one in this browser) — the vote is signed by that wallet.");
+        showWalletError(
+            "No wallet yet — your vote must be signed by one. Connect an extension wallet (MetaMask etc.) or generate a free wallet in this browser, then vote again."
+        );
         return;
     }
     publishing = true;
@@ -318,7 +329,7 @@ async function main() {
             log(`wallet connected: ${address}`);
             renderWallet(address);
         } catch (err) {
-            log(`wallet connect failed: ${(err as Error).message}`);
+            showWalletError(`Wallet connect failed: ${(err as Error).message}`);
         }
     };
     $("burner-btn").onclick = () => {
