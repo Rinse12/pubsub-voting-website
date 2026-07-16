@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-seeder/
+seeder-data/
+.bitsocial-pubsub-voting/
+*.log
+tes

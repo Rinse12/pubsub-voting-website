@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>BSO board vote</title>
+        <link rel="stylesheet" href="/src/style.css" />
+    </head>
+    <body>
+        <main>
+            <header>
+                <h1>BSO board vote</h1>
+                <p class="sub">
+                    Trustless voting over libp2p pubsub. Any wallet holding <strong>&ge; 1 BSO</strong> gets exactly one
+                    vote — signed in your browser, verified on-chain by every peer, counted with no server.
+                </p>
+            </header>
+
+            <section class="card" id="network-card">
+                <h2>Network</h2>
+                <div class="row"><span class="dot" id="seeder-dot"></span><span id="seeder-status">starting node…</span></div>
+                <dl class="kv">
+                    <dt>Your peer</dt>
+                    <dd><code id="peer-id">—</code></dd>
+                    <dt>Connected peers</dt>
+                    <dd id="peer-count">0</dd>
+                    <dt>Topic</dt>
+                    <dd><code id="topic" class="wrap">—</code></dd>
+                </dl>
+            </section>
+
+            <section class="card" id="wallet-card">
+                <h2>Wallet</h2>
+                <p class="hint">
+                    Why connect? Your vote is an EIP-712 message signed by the wallet that holds your BSO — the
+                    signature <em>is</em> your voter identity, and peers check that wallet's balance on-chain before
+                    counting the vote. It's a free signature, never a transaction.
+                </p>
+                <button id="connect-btn">Connect wallet</button>
+                <dl class="kv" id="wallet-info" hidden>
+                    <dt>Address</dt>
+                    <dd><code id="wallet-address"></code></dd>
+                    <dt>BSO balance</dt>
+                    <dd id="wallet-balance">…</dd>
+                    <dt>Eligible</dt>
+                    <dd id="wallet-eligible">…</dd>
+                </dl>
+            </section>
+
+            <section class="card" id="tally-card">
+                <h2>Boards</h2>
+                <p class="hint" id="tally-hint">Waiting for the first tally…</p>
+                <table id="tally-table" hidden>
+                    <thead>
+                        <tr><th>#</th><th>Board</th><th>Votes</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody id="tally-body"></tbody>
+                </table>
+            </section>
+
+            <section class="card" id="new-board-card">
+                <h2>Vote for a new board</h2>
+                <form id="new-board-form">
+                    <label>
+                        Board public key <span class="req">(required)</span>
+                        <input id="board-key" placeholder="12D3KooW…" autocomplete="off" spellcheck="false" required />
+                    </label>
+                    <label>
+                        Board name <span class="req">(optional — leave empty unless the board owns this .bso name)</span>
+                        <input id="board-name" placeholder="example.bso" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <p class="hint">
+                        A name is a verified claim: peers resolve it on-chain and <strong>drop the vote</strong> if it
+                        doesn't resolve to this exact public key.
+                    </p>
+                    <button type="submit">Sign &amp; publish vote</button>
+                </form>
+            </section>
+
+            <section class="card" id="my-vote-card" hidden>
+                <h2>Your vote</h2>
+                <dl class="kv">
+                    <dt>Voted for</dt>
+                    <dd><code id="my-vote-target"></code></dd>
+                    <dt>Cast</dt>
+                    <dd id="my-vote-when"></dd>
+                    <dt>Expires</dt>
+                    <dd id="my-vote-expiry"></dd>
+                </dl>
+                <p class="hint">Votes decay: re-vote before expiry (just vote again) to keep it counted.</p>
+                <button id="withdraw-btn" class="danger">Withdraw vote</button>
+            </section>
+
+            <section class="card">
+                <h2>Log</h2>
+                <pre id="log"></pre>
+            </section>
+        </main>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
+</html>

@@ -1,0 +1,26 @@
+# systemd unit for the pubsub-voting seeder on new-plebbit.
+# Install (as the user that cloned the repo, adjust paths/user):
+#   sudo cp seeder/pubsub-voting-seeder.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now pubsub-voting-seeder
+#   journalctl -fu pubsub-voting-seeder
+[Unit]
+Description=pubsub-voting seeder (libp2p AutoTLS node for browser voters)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# CHANGE ME: the user that owns the checkout
+User=plebbit
+# CHANGE ME: where the repo is cloned
+WorkingDirectory=/home/plebbit/pubsub-voting-website
+ExecStart=/usr/bin/env npm run seeder
+Environment=SEEDER_DATA=/home/plebbit/pubsub-voting-website/seeder-data
+# Uncomment if AutoNAT can't confirm the public address by itself:
+#Environment=PUBLIC_IP=1.2.3.4
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
