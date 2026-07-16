@@ -198,12 +198,57 @@ async function main() {
     if (contractIsPlaceholder)
         log("WARNING: shared/criteria.ts still has the placeholder BSO contract address — voting is disabled until it is filled in.");
 
+    /* ---------- connectivity diagnostics ----------
+     * Everything vote-sync does rides three observable seams: connections, gossipsub
+     * subscriptions on the contest topic, and the cold-join checkpoint pull over the
+     * fetch protocol. Log all three so "why don't I see votes?" is answerable from
+     * the on-page log alone. */
+    const libp2p = helia.libp2p;
+    const pubsub = libp2p.services.pubsub as {
+        getSubscribers(topic: string): unknown[];
+        addEventListener(type: "subscription-change", cb: (evt: CustomEvent) => void): void;
+    };
+    libp2p.addEventListener("connection:open", (evt) =>
+        log(`conn open: ${evt.detail.remotePeer} via ${evt.detail.remoteAddr}`)
+    );
+    libp2p.addEventListener("connection:close", (evt) => log(`conn close: ${evt.detail.remotePeer}`));
+    pubsub.addEventListener("subscription-change", (evt) => {
+        const detail = evt.detail as { peerId: unknown; subscriptions: { topic: string; subscribe: boolean }[] };
+        for (const sub of detail.subscriptions ?? []) {
+            if (sub.topic !== topic) continue;
+            log(
+                `topic ${sub.subscribe ? "subscribe" : "unsubscribe"}: ${detail.peerId} ` +
+                    `(${pubsub.getSubscribers(topic).length} subscriber(s) visible)`
+            );
+        }
+    });
+    const fetchSvc = libp2p.services.fetch as {
+        fetch(peer: unknown, key: string | Uint8Array, opts?: unknown): Promise<Uint8Array | undefined>;
+    };
+    const realFetch = fetchSvc.fetch.bind(fetchSvc);
+    fetchSvc.fetch = async (peer, key, opts) => {
+        const keyStr = typeof key === "string" ? key : new TextDecoder().decode(key);
+        log(`checkpoint fetch → ${peer} ${keyStr}`);
+        try {
+            const value = await realFetch(peer, key, opts);
+            log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes`}`);
+            return value;
+        } catch (err) {
+            log(`checkpoint fetch failed: ${(err as Error).message}`);
+            throw err;
+        }
+    };
+
+    let seederConnected = false;
     keepSeederConnected(helia, (connected, err) => {
         const dot = $("seeder-dot");
         dot.className = `dot ${connected ? "ok" : "bad"}`;
         $("seeder-status").textContent = connected
             ? "connected to seeder"
             : `not connected to seeder${err ? ` — ${err.message}` : ", retrying…"}`;
+        if (connected !== seederConnected)
+            log(connected ? "seeder connection established" : `seeder connection lost${err ? ` — ${err.message}` : ""}`);
+        seederConnected = connected;
     });
 
     voter = new PubsubVoter({

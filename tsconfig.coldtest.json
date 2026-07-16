@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.seeder.json",
+  "include": ["scripts/cold-join-test.ts", "shared"]
+}

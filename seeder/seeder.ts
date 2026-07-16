@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createLibp2p, type Libp2pOptions } from "libp2p";
@@ -45,13 +45,26 @@ import { makeNameResolvers } from "../shared/resolvers.js";
  * src/config.ts.
  */
 
-const log = (msg: string) => console.log(`[${new Date().toISOString()}] ${msg}`);
-
 const dataDir = process.env.SEEDER_DATA ?? join(process.cwd(), "seeder-data");
 const tcpPort = Number(process.env.TCP_PORT ?? 4002);
 const wsPort = Number(process.env.WS_PORT ?? 4003);
 const autoTlsEnabled = process.env.AUTO_TLS !== "off";
 mkdirSync(dataDir, { recursive: true });
+
+// Every log line goes to stdout (journald) AND $SEEDER_DATA/seeder.log so diagnostics
+// survive without journalctl access. One rotation generation at 10 MB keeps it bounded.
+const logFile = join(dataDir, "seeder.log");
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024;
+const log = (msg: string) => {
+    const line = `[${new Date().toISOString()}] ${msg}`;
+    console.log(line);
+    try {
+        if (existsSync(logFile) && statSync(logFile).size >= LOG_ROTATE_BYTES) renameSync(logFile, `${logFile}.1`);
+        appendFileSync(logFile, `${line}\n`);
+    } catch {
+        // Never let diagnostics take the seeder down (e.g. disk full).
+    }
+};
 
 /** Stable identity across restarts — the AutoTLS domain and the browser-pinned multiaddr embed the peer id. */
 async function loadOrCreatePrivateKey() {
@@ -144,6 +157,45 @@ async function main() {
           })
         : await createLibp2p({ ...common, services: baseServices });
     const helia = await createHelia({ libp2p });
+    const topic = await topicFor(criteria);
+
+    // ---- connection/topic diagnostics (journald + seeder.log) ----
+    // Answers "did that browser tab ever reach us, join the topic, and pull the checkpoint?"
+    libp2p.addEventListener("connection:open", (evt) => {
+        const conn = evt.detail;
+        log(`conn open: ${conn.remotePeer} via ${conn.remoteAddr} (${libp2p.getConnections().length} conns)`);
+    });
+    libp2p.addEventListener("connection:close", (evt) => {
+        const conn = evt.detail;
+        log(`conn close: ${conn.remotePeer} via ${conn.remoteAddr} (${libp2p.getConnections().length} conns)`);
+    });
+    const pubsub = libp2p.services.pubsub;
+    pubsub.addEventListener("subscription-change", (evt) => {
+        for (const sub of evt.detail.subscriptions) {
+            if (sub.topic !== topic) continue;
+            log(
+                `topic ${sub.subscribe ? "subscribe" : "unsubscribe"}: ${evt.detail.peerId} ` +
+                    `(${pubsub.getSubscribers(topic).length} subscriber(s))`
+            );
+        }
+    });
+    pubsub.addEventListener("message", (evt) => {
+        if (evt.detail.topic !== topic) return;
+        const from = "from" in evt.detail ? evt.detail.from.toString() : "(unsigned)";
+        log(`gossip message on topic: ${evt.detail.data.length} bytes from ${from}`);
+    });
+    // The fetch protocol has no serve event, so wrap lookup registration: each cold joiner
+    // pulling the checkpoint root record shows up as one "fetch serve" line.
+    const fetchSvc = libp2p.services.fetch;
+    const realRegister = fetchSvc.registerLookupFunction.bind(fetchSvc);
+    fetchSvc.registerLookupFunction = (prefix, lookup) => {
+        realRegister(prefix, async (key) => {
+            const value = await lookup(key);
+            log(`fetch serve: ${new TextDecoder().decode(key)} → ${value === undefined ? "no value" : `${value.length} bytes`}`);
+            return value;
+        });
+    };
+
     log(`peer id: ${libp2p.peerId.toString()}`);
     log(`listening: ${libp2p.getMultiaddrs().map(String).join(", ") || "(no confirmed addrs yet)"}`);
     if (autoTlsEnabled) log("waiting for AutoNAT to confirm the public address, then AutoTLS provisions the certificate…");
@@ -177,7 +229,6 @@ async function main() {
         nameResolvers: makeNameResolvers(),
         dataPath: join(dataDir, "voting")
     });
-    const topic = await topicFor(criteria);
     log(`contest topic: ${topic}`);
     const contest = await voter.createContest({ criteria });
     contest.on("update", () => {

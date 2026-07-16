@@ -79,12 +79,42 @@ Runs as systemd unit `pubsub-voting-seeder` from `/root/pubsub-voting-website`
 ```bash
 ssh new-plebbit
 journalctl -fu pubsub-voting-seeder          # watch tally updates / cert renewals
+tail -f /root/pubsub-voting-website/seeder-data/seeder.log   # same lines, plain file
 systemctl restart pubsub-voting-seeder       # after code changes: recompile first:
 cd /root/pubsub-voting-website && ./node_modules/.bin/tsc -p tsconfig.seeder.json
 ```
 
+The seeder logs connection open/close, contest-topic subscribe/unsubscribe, gossip
+messages on the topic, checkpoint (root record) fetch serves, and tally updates — to
+stdout (journald) and to `seeder-data/seeder.log` (rotated once at 10 MB).
+
 Do **not** delete `seeder-data/peer.key`: the peer id determines the
 `….libp2p.direct` hostname and the multiaddr baked into `src/config.ts`.
+
+**Vote state is memory-only on the seeder.** The CRDT lives in the process (the
+`seeder-data/voting` dir only holds LRU caches), so a restart empties the tally until
+an online browser peer re-advertises its checkpoint (root-record heartbeat, ≤ ~12.5
+min) and the seeder chases it back. Restarting while **no** voter tab is open loses
+the votes permanently.
+
+### Diagnosing "I don't see votes"
+
+`scripts/cold-join-test.ts` acts as a brand-new voter against the production seeder
+and reports how long the tally takes to converge:
+
+```bash
+npx tsc -p tsconfig.coldtest.json
+WAIT_SUBS=1 node dist-seeder/scripts/cold-join-test.js   # healthy: converges in ~5 s
+node dist-seeder/scripts/cold-join-test.js               # joins as soon as connected
+```
+
+Background: through pubsub-voting 0.0.8 the cold-join pull for past votes ran **once**,
+at topic join, and only asked peers already visible in `getSubscribers(topic)`. A join
+that raced the seeder's subscription exchange synced nothing and waited ~10 minutes
+(jittered heartbeat) for the next chance — which looked like "votes are missing" in a
+fresh tab. Fixed upstream in 0.0.10 (pubsub-voting #15): the cold-start pull re-arms on
+gossipsub `subscription-change` for the first heartbeat interval after join, so this
+site uses the library as-is with no join-ordering workaround.
 
 ### Changing the contest rules
 
