@@ -193,6 +193,7 @@ async function main() {
     const topic = await topicFor(criteria);
     storageKey = `bso-vote:${topic}`;
     $("topic").textContent = topic;
+    $("criteria-json").textContent = JSON.stringify(criteria, null, 2);
     log(`contest topic: ${topic}`);
     if (contractIsPlaceholder)
         log("WARNING: shared/criteria.ts still has the placeholder BSO contract address — voting is disabled until it is filled in.");

@@ -27,6 +27,15 @@
                     <dt>Topic</dt>
                     <dd><code id="topic" class="wrap">—</code></dd>
                 </dl>
+                <details id="criteria-details">
+                    <summary>Contest criteria — the document this topic is derived from</summary>
+                    <p class="hint">
+                        The topic is <code>bitsocial-votes/&lt;CID&gt;</code>, where the CID is the hash of this
+                        exact document (canonical dag-cbor). Every peer validates votes against these rules, so
+                        changing any byte — even an RPC URL — forks the contest onto a different topic.
+                    </p>
+                    <pre id="criteria-json">—</pre>
+                </details>
                 <div id="peer-list-wrap" hidden>
                     <h3>Connected peers</h3>
                     <ul id="peer-list" class="peer-list"></ul>
