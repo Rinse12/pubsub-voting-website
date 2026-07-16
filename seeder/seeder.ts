@@ -19,7 +19,6 @@ import { FsDatastore } from "datastore-fs";
 import { createHelia } from "helia";
 import { PubsubVoter, topicFor } from "@bitsocial/pubsub-voting";
 import { criteria } from "../shared/criteria.js";
-import { customRules } from "../shared/erc20-balance-rule.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 import { describeGossipMessage, describeRootRecord } from "../shared/wire-log.js";
@@ -231,7 +230,6 @@ async function main() {
     const voter = new PubsubVoter({
         helia,
         chains: chainClientFactory,
-        rules: customRules,
         nameResolvers: makeNameResolvers(),
         dataPath: join(dataDir, "voting")
     });

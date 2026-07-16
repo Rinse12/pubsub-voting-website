@@ -1,8 +1,6 @@
 import { PubsubVoter, topicFor, CommunitySchema, type Contest, type Vote } from "@bitsocial/pubsub-voting";
-import { erc20Abi, formatUnits, getAddress } from "viem";
-import { criteria, BSO_CONTRACT, SECONDS_PER_BLOCK, TOKEN_DECIMALS, TOKEN_SYMBOL } from "../shared/criteria.js";
-import { customRules } from "../shared/erc20-balance-rule.js";
-import { chainClientFactory, makeEthClient } from "../shared/chains.js";
+import { criteria, SECONDS_PER_BLOCK } from "../shared/criteria.js";
+import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 import {
     decodeChunkBundles,
@@ -14,7 +12,7 @@ import {
 } from "../shared/wire-log.js";
 import { startBrowserNode, keepSeederConnected } from "./node.js";
 import type { CID } from "multiformats/cid";
-import { InjectedWalletSigner } from "./signer.js";
+import { BrowserWalletSigner } from "./signer.js";
 
 /* ---------- tiny DOM helpers ---------- */
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -25,8 +23,6 @@ function log(message: string) {
     logEl.textContent = `${line}\n${logEl.textContent ?? ""}`.slice(0, 20_000);
 }
 const shortKey = (key: string) => (key.length > 20 ? `${key.slice(0, 10)}…${key.slice(-6)}` : key);
-
-const contractIsPlaceholder = BSO_CONTRACT.includes("TODO");
 
 /* ---------- my-vote persistence (per contest + wallet) ---------- */
 interface StoredVote {
@@ -46,7 +42,7 @@ function loadMyVote(address: string): StoredVote | undefined {
 }
 
 /* ---------- state ---------- */
-const signer = new InjectedWalletSigner();
+const signer = new BrowserWalletSigner();
 let voter: PubsubVoter;
 let contest: Contest;
 let publishing = false;
@@ -144,44 +140,22 @@ function renderTally() {
     });
 }
 
-async function renderWallet(address: `0x${string}`) {
+function renderWallet(address: `0x${string}`) {
     $("connect-btn").textContent = "Reconnect wallet";
     $("wallet-info").hidden = false;
     $("wallet-address").textContent = address;
+    $("wallet-kind").textContent =
+        signer.kind === "burner" ? "burner — generated and stored in this browser" : "injected (MetaMask etc.)";
+    // The contest gate is the open `constant` rule: every wallet is eligible.
+    $("wallet-eligible").innerHTML = `<span class="badge-ok">yes — any wallet can vote</span>`;
     renderMyVote();
-    if (contractIsPlaceholder) {
-        $("wallet-balance").textContent = "unknown — BSO contract address not configured yet";
-        $("wallet-eligible").innerHTML = `<span class="badge-bad">voting disabled (placeholder contract)</span>`;
-        return;
-    }
-    try {
-        const balance = await makeEthClient().readContract({
-            address: getAddress(BSO_CONTRACT),
-            abi: erc20Abi,
-            functionName: "balanceOf",
-            args: [address]
-        });
-        const whole = formatUnits(balance, TOKEN_DECIMALS);
-        $("wallet-balance").textContent = `${whole} ${TOKEN_SYMBOL}`;
-        const eligible = Number(whole) >= 1;
-        $("wallet-eligible").innerHTML = eligible
-            ? `<span class="badge-ok">yes — you can vote</span>`
-            : `<span class="badge-bad">no — needs ≥ 1 ${TOKEN_SYMBOL}</span>`;
-    } catch (err) {
-        $("wallet-balance").textContent = "balance read failed (RPC error)";
-        log(`balance read failed: ${(err as Error).message}`);
-    }
 }
 
 /* ---------- voting ---------- */
 async function castVote(votes: Vote[]) {
     if (publishing) return;
-    if (contractIsPlaceholder) {
-        log("Cannot vote: the BSO contract address in shared/criteria.ts is still the placeholder.");
-        return;
-    }
     if (!signer.connectedAddress) {
-        log("Connect your wallet first — the vote must be signed by the wallet holding your BSO.");
+        log("Connect a wallet first (or generate one in this browser) — the vote is signed by that wallet.");
         return;
     }
     publishing = true;
@@ -243,8 +217,6 @@ async function main() {
     $("topic").textContent = topic;
     $("criteria-json").textContent = JSON.stringify(criteria, null, 2);
     log(`contest topic: ${topic}`);
-    if (contractIsPlaceholder)
-        log("WARNING: shared/criteria.ts still has the placeholder BSO contract address — voting is disabled until it is filled in.");
 
     /* ---------- connectivity diagnostics ----------
      * Everything vote-sync does rides three observable seams: connections, gossipsub
@@ -317,7 +289,6 @@ async function main() {
         helia,
         chains: chainClientFactory,
         signer,
-        rules: customRules,
         nameResolvers: makeNameResolvers()
     });
 
@@ -340,13 +311,29 @@ async function main() {
     log("joined the contest topic; syncing votes…");
 
     /* wire UI events */
+    if (BrowserWalletSigner.hasStoredBurner()) $("burner-btn").textContent = "Use my browser wallet";
     $("connect-btn").onclick = async () => {
         try {
-            const address = await signer.connect();
+            const address = await signer.connectInjected();
             log(`wallet connected: ${address}`);
-            await renderWallet(address);
+            renderWallet(address);
         } catch (err) {
             log(`wallet connect failed: ${(err as Error).message}`);
+        }
+    };
+    $("burner-btn").onclick = () => {
+        try {
+            const existing = BrowserWalletSigner.hasStoredBurner();
+            const address = signer.useBurner();
+            log(
+                existing
+                    ? `browser wallet loaded: ${address}`
+                    : `browser wallet generated: ${address} (key saved in this browser's localStorage)`
+            );
+            $("burner-btn").textContent = "Use my browser wallet";
+            renderWallet(address);
+        } catch (err) {
+            log(`browser wallet failed: ${(err as Error).message}`);
         }
     };
 
