@@ -4,7 +4,16 @@ import { criteria, BSO_CONTRACT, SECONDS_PER_BLOCK, TOKEN_DECIMALS, TOKEN_SYMBOL
 import { customRules } from "../shared/erc20-balance-rule.js";
 import { chainClientFactory, makeEthClient } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
+import {
+    decodeChunkBundles,
+    describeGossipMessage,
+    describeRootRecord,
+    extractLiveBundle,
+    parseRootRecord,
+    type DownloadedBundle
+} from "../shared/wire-log.js";
 import { startBrowserNode, keepSeederConnected } from "./node.js";
+import type { CID } from "multiformats/cid";
 import { InjectedWalletSigner } from "./signer.js";
 
 /* ---------- tiny DOM helpers ---------- */
@@ -41,6 +50,45 @@ const signer = new InjectedWalletSigner();
 let voter: PubsubVoter;
 let contest: Contest;
 let publishing = false;
+
+/* ---------- downloaded vote bundles (debug panel) ----------
+ * Every signed bundle this tab has seen, by CID: live-delta gossip messages decode
+ * straight from the wire; checkpoint bundles are read back from the Helia blockstore
+ * via the chunk CIDs the last fetched root record advertised (the chase stores the
+ * blocks there — and if it hasn't yet, the timed-out get just retries on the next
+ * tally update). */
+const downloadedBundles = new Map<string, unknown>();
+let checkpointChunks: CID[] = [];
+
+function renderBundles() {
+    $("bundles-summary").textContent = `Downloaded vote bundles (${downloadedBundles.size})`;
+    $("bundles-json").textContent =
+        downloadedBundles.size === 0
+            ? "none yet"
+            : JSON.stringify(
+                  [...downloadedBundles.entries()].map(([cid, bundle]) => ({ cid, bundle })),
+                  null,
+                  2
+              );
+}
+
+function addBundle({ cid, bundle }: DownloadedBundle) {
+    if (downloadedBundles.has(cid)) return;
+    downloadedBundles.set(cid, bundle);
+    log(`vote bundle downloaded: cid ${cid}`);
+    renderBundles();
+}
+
+async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { signal?: AbortSignal }): unknown }) {
+    for (const chunk of checkpointChunks) {
+        try {
+            const bytes = (await blockstore.get(chunk, { signal: AbortSignal.timeout(10_000) })) as Uint8Array;
+            for (const item of await decodeChunkBundles(bytes)) addBundle(item);
+        } catch {
+            // Chunk not chased/served yet — the next tally update retries.
+        }
+    }
+}
 
 /* ---------- rendering ---------- */
 function renderMyVote() {
@@ -206,7 +254,7 @@ async function main() {
     const libp2p = helia.libp2p;
     const pubsub = libp2p.services.pubsub as {
         getSubscribers(topic: string): unknown[];
-        addEventListener(type: "subscription-change", cb: (evt: CustomEvent) => void): void;
+        addEventListener(type: "subscription-change" | "message", cb: (evt: CustomEvent) => void): void;
     };
     libp2p.addEventListener("connection:open", (evt) =>
         log(`conn open: ${evt.detail.remotePeer} via ${evt.detail.remoteAddr}`)
@@ -222,6 +270,15 @@ async function main() {
             );
         }
     });
+    pubsub.addEventListener("message", (evt) => {
+        const detail = evt.detail as { topic: string; data: Uint8Array; from?: unknown };
+        if (detail.topic !== topic) return;
+        void (async () => {
+            log(`gossip from ${detail.from ?? "(unsigned)"}: ${await describeGossipMessage(detail.data)}`);
+            const live = await extractLiveBundle(detail.data);
+            if (live) addBundle(live);
+        })();
+    });
     const fetchSvc = libp2p.services.fetch as {
         fetch(peer: unknown, key: string | Uint8Array, opts?: unknown): Promise<Uint8Array | undefined>;
     };
@@ -231,7 +288,12 @@ async function main() {
         log(`checkpoint fetch → ${peer} ${keyStr}`);
         try {
             const value = await realFetch(peer, key, opts);
-            log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes`}`);
+            log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
+            const record = value === undefined ? undefined : parseRootRecord(value);
+            if (record?.chunks?.length) {
+                checkpointChunks = record.chunks;
+                void refreshCheckpointBundles(helia.blockstore);
+            }
             return value;
         } catch (err) {
             log(`checkpoint fetch failed: ${(err as Error).message}`);
@@ -260,7 +322,19 @@ async function main() {
     });
 
     contest = await voter.createContest({ criteria });
-    contest.on("update", () => renderTally());
+    contest.on("update", () => {
+        // Same line the seeder logs, so the two sides are directly comparable.
+        const ranking = contest.tally?.ranking ?? [];
+        const top = ranking[0];
+        log(
+            `tally update: ${ranking.length} board(s)` +
+                (top ? `, leader ${top.community.name ?? shortKey(top.community.publicKey)} with ${top.weight} vote(s)` : "")
+        );
+        renderTally();
+        // The chase that fired this update stored any checkpoint blocks it pulled.
+        void refreshCheckpointBundles(helia.blockstore);
+    });
+    renderBundles();
     contest.on("error", (err: unknown) => log(`contest error (retrying): ${err instanceof Error ? err.message : String(err)}`));
     await contest.update();
     log("joined the contest topic; syncing votes…");
