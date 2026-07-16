@@ -10,13 +10,11 @@ import type { Criteria } from "@bitsocial/pubsub-voting";
  */
 
 /**
- * TODO(REQUIRED before launch): the BSO ERC-20 contract on Ethereum mainnet.
- * The address provided so far (0x4c109dc223a10d44c14f521caed91dab5a) is truncated —
- * a valid EVM address is 40 hex chars, this one is 34. Voting fails at signing time
- * (viem getAddress throws) until the full address is filled in. Replacing it changes
- * the topic: redeploy the site AND restart the seeder together.
+ * The BSO ERC-20 contract on Ethereum mainnet ("Bitsocial", symbol BSO, 18 decimals —
+ * verified on-chain). Replacing it changes the topic: redeploy the site AND restart
+ * the seeder together.
  */
-export const BSO_CONTRACT = "0x4c109dc223a10d44c14f521caed91dab5a_TODO_FULL_ADDRESS";
+export const BSO_CONTRACT = "0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A";
 
 /**
  * Public, CORS-enabled, archive-capable Ethereum mainnet RPCs. Archive matters:

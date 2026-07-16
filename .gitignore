@@ -5,3 +5,6 @@ seeder-data/
 .bitsocial-pubsub-voting/
 *.log
 tes
+
+# Local Netlify folder
+.netlify

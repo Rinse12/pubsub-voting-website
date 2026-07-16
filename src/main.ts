@@ -172,7 +172,22 @@ async function main() {
     const helia = await startBrowserNode();
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
-        $("peer-count").textContent = String(helia.libp2p.getConnections().length);
+        const connections = helia.libp2p.getConnections();
+        $("peer-count").textContent = String(connections.length);
+        // Live list of connected peers with the multiaddr each connection runs over.
+        $("peer-list-wrap").hidden = connections.length === 0;
+        const list = $("peer-list");
+        list.textContent = "";
+        for (const conn of connections) {
+            const li = document.createElement("li");
+            const peer = document.createElement("code");
+            peer.textContent = conn.remotePeer.toString();
+            const addr = document.createElement("span");
+            addr.className = "peer-addr";
+            addr.textContent = conn.remoteAddr.toString();
+            li.append(peer, addr);
+            list.appendChild(li);
+        }
     }, 2000);
 
     const topic = await topicFor(criteria);

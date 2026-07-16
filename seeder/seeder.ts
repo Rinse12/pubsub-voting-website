@@ -91,17 +91,19 @@ async function main() {
             listen: [
                 `/ip4/0.0.0.0/tcp/${tcpPort}`,
                 `/ip6/::/tcp/${tcpPort}`,
-                // AutoTLS attaches the provisioned certificate to /tls/ws listeners;
-                // with AUTO_TLS=off we listen on plain /ws for local testing instead.
-                ...(autoTlsEnabled
-                    ? [`/ip4/0.0.0.0/tcp/${wsPort}/tls/ws`, `/ip6/::/tcp/${wsPort}/tls/ws`]
-                    : [`/ip4/0.0.0.0/tcp/${wsPort}/ws`])
+                // Plain /ws on purpose, even with AutoTLS on: the websockets listener
+                // serves http and https on the same port (first-byte sniffing) and only
+                // installs the AutoTLS certificate into a listener that isn't already
+                // https — an explicit /tls/ws listen creates a certless https server
+                // that rejects every handshake (TLS alert 40) forever.
+                `/ip4/0.0.0.0/tcp/${wsPort}/ws`,
+                `/ip6/::/tcp/${wsPort}/ws`
             ],
             ...(process.env.PUBLIC_IP
                 ? {
                       appendAnnounce: [
                           `/ip4/${process.env.PUBLIC_IP}/tcp/${tcpPort}`,
-                          `/ip4/${process.env.PUBLIC_IP}/tcp/${wsPort}/tls/ws`
+                          `/ip4/${process.env.PUBLIC_IP}/tcp/${wsPort}/ws`
                       ]
                   }
                 : {})
