@@ -11,8 +11,9 @@
             <header>
                 <h1>BSO board vote</h1>
                 <p class="sub">
-                    Trustless voting over libp2p pubsub. Any wallet holding <strong>&ge; 1 BSO</strong> gets exactly one
-                    vote — signed in your browser, verified on-chain by every peer, counted with no server.
+                    Trustless voting over libp2p pubsub. <strong>Any EVM wallet</strong> gets exactly one vote — no
+                    tokens, no gas — signed in your browser, verified by every peer, counted with no server. No wallet
+                    installed? The page can generate one for you.
                 </p>
             </header>
 
@@ -45,16 +46,20 @@
             <section class="card" id="wallet-card">
                 <h2>Wallet</h2>
                 <p class="hint">
-                    Why connect? Your vote is an EIP-712 message signed by the wallet that holds your BSO — the
-                    signature <em>is</em> your voter identity, and peers check that wallet's balance on-chain before
-                    counting the vote. It's a free signature, never a transaction.
+                    Why a wallet? Your vote is an EIP-712 message and the signature <em>is</em> your voter identity —
+                    a free signature, never a transaction. This test contest is open: every wallet is eligible.
+                    Connect an extension wallet (MetaMask etc.), or generate a throwaway wallet that lives only in
+                    this browser (clearing site data discards it).
                 </p>
-                <button id="connect-btn">Connect wallet</button>
+                <div class="row">
+                    <button id="connect-btn">Connect wallet</button>
+                    <button id="burner-btn">No wallet? Generate one in this browser</button>
+                </div>
                 <dl class="kv" id="wallet-info" hidden>
                     <dt>Address</dt>
                     <dd><code id="wallet-address"></code></dd>
-                    <dt>BSO balance</dt>
-                    <dd id="wallet-balance">…</dd>
+                    <dt>Type</dt>
+                    <dd id="wallet-kind">…</dd>
                     <dt>Eligible</dt>
                     <dd id="wallet-eligible">…</dd>
                 </dl>

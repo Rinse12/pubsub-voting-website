@@ -3,18 +3,19 @@
 **Live site: <https://bso-board-vote.netlify.app>**
 
 A static website where people vote over libp2p **pubsub** — no server counts the votes.
-Voting is gated by an ERC-20 balance: **any wallet holding ≥ 1 BSO
-([`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`](https://etherscan.io/token/0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A)
-on Ethereum mainnet) gets exactly one vote** (constant weight, not balance-weighted).
-Voters pick an existing board from the live tally or submit a new board (a `12D3KooW…`
-public key, optionally a verified `.bso` name).
+The contest is **open: any EVM wallet gets exactly one vote** (the built-in `constant`
+rule as the gate — no token, no gas; knowingly sybil-open because this test wants
+maximum participation). Visitors without an extension wallet can have the page
+**generate a burner wallet in the browser** (key persisted in localStorage). Voters pick
+an existing board from the live tally or submit a new board (a `12D3KooW…` public key,
+optionally a verified `.bso` name).
 
 Built on [`@bitsocial/pubsub-voting`](https://github.com/bitsocialnet/pubsub-voting):
-votes are EIP-712 ballots signed by the token-holding wallet, gossiped on a topic derived
-from the contest rules, validated by every peer (signature + on-chain balance at a
-bucketed block) **before** re-forwarding, and merged with a last-write-wins CRDT.
+votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic derived
+from the contest rules, validated by every peer (signature + bucketed-block freshness)
+**before** re-forwarding, and merged with a last-write-wins CRDT.
 
-Contest topic: `bitsocial-votes/bafyreih4kfwpmojl2sxrinfimzm7ardh7tfnccgwhulil63ybopugfh2d4`
+Contest topic: `bitsocial-votes/bafyreih53ht6eu6zeup7rfn7yxomvxo35tfkd3zadacxq66kr62pip47ay`
 
 ## Architecture
 
@@ -29,7 +30,7 @@ Netlify (static HTML/JS)                     new-plebbit (89.36.231.48)
         ▲    ▲                              │    cold-joining browsers       │
         │    └── other browsers, meshed     └────────────────────────────────┘
         │        through the seeder
-        └── Ethereum mainnet RPC (balanceOf reads)
+        └── Ethereum mainnet RPC (bucket-block head reads; no balance checks)
 ```
 
 Browsers can't accept inbound connections, so they all dial the seeder's WSS address
@@ -39,13 +40,16 @@ peers noticing — validation is done by every participant.
 
 ## How a vote works
 
-1. The visitor connects an injected wallet (MetaMask etc.). Connecting is what gives the
-   vote an identity — no transaction, no gas, just an EIP-712 signature popup per vote.
+1. The visitor connects an injected wallet (MetaMask etc.) **or clicks "generate one in
+   this browser"** — a burner key created with viem and persisted in localStorage, so
+   the same browser keeps the same voter identity (needed to replace/withdraw a vote).
+   Either way the wallet is the identity — no transaction, no gas.
 2. The library builds the ballot (chosen board, current block bucket, the contest's
-   criteria CID) and the wallet signs it.
+   criteria CID) and the wallet signs it (EIP-712; a popup for injected wallets,
+   silent for burners).
 3. The signed bundle is gossiped on the topic. Every receiving peer recovers the signer
-   address from the signature and reads `balanceOf(signer)` at the bucket's sampled
-   mainnet block; bundles that don't hold ≥ 1 BSO are dropped and never forwarded.
+   address from the signature and checks the ballot's bucket freshness; the open
+   `constant` gate admits every address, so no balance is read.
 4. One wallet, one vote: a newer ballot from the same wallet replaces the older one
    (last-write-wins), and an empty ballot withdraws.
 5. Votes expire after ~30 days (`voteExpiryBuckets`); voters keep a vote alive by simply
@@ -54,9 +58,9 @@ peers noticing — validation is done by every participant.
 ## Repo layout
 
 ```
-shared/    criteria document (defines the contest AND the topic), vendored
-           erc20-balance rule, viem chain factory, .bso name resolvers
-src/       the website: in-browser Helia/libp2p node, injected-wallet signer, UI
+shared/    criteria document (defines the contest AND the topic), viem chain
+           factory, .bso name resolvers, wire-log decoders
+src/       the website: in-browser Helia/libp2p node, injected+burner wallet signer, UI
 seeder/    the always-on node: AutoTLS/WSS seeder script + systemd unit
 scripts/   derive-topic.ts — validate criteria + print the topic (npm run topic)
 ```
@@ -127,9 +131,12 @@ site uses the library as-is with no join-ordering workaround.
 
 ### Changing the contest rules
 
-Anything in [shared/criteria.ts](shared/criteria.ts) (contract, threshold, RPCs,
-expiry, `contestId`) changes the criteria bytes and therefore **forks the topic** —
-old votes don't carry over. Redeploy the site and restart the seeder together.
+Anything in [shared/criteria.ts](shared/criteria.ts) (gate rule, RPCs, expiry,
+`contestId`) changes the criteria bytes and therefore **forks the topic** — old votes
+don't carry over. Redeploy the site and restart the seeder together. History: contest
+`bso-board-vote-test-1` (topic `…zm7ardh7tfnccgwhulil63ybopugfh2d4`) was gated on
+holding ≥ 1 BSO (`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`) via a vendored
+`erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers.
 
 ## Local development
 
@@ -141,17 +148,19 @@ AUTO_TLS=off npm run seeder    # local seeder: plain ws on 127.0.0.1:4003, no ce
 npm run dev                    # plain ws works from http://localhost
 ```
 
-Casting a vote end-to-end needs a wallet with ≥ 1 BSO on mainnet (the balance check is
-real even locally). The tally, connectivity, and read-only sync all work without one.
+Casting a vote end-to-end needs no tokens — any wallet works, including the
+browser-generated burner, so the full flow is testable locally.
 
 ## Notable implementation choices & gotchas
 
-- **`erc20-balance` rule is vendored** ([shared/erc20-balance-rule.ts](shared/erc20-balance-rule.ts)).
-  The library ships it in its tree but deliberately unregistered (token-*weighted* voting
-  is deferred upstream). We use it only as the eligibility **gate** with a `constant`
-  weight, registered via `PubsubVoter({ rules })` on both the site and the seeder.
-  Stock clients that don't register it recuse themselves (`UnknownRuleError`) instead of
-  miscounting — that's by design.
+- **The gate is the built-in `constant` rule** — deliberately sybil-open for this test
+  (wallets are free to generate; the burner button makes that one click). A nice side
+  effect of using only built-ins: any stock `@bitsocial/pubsub-voting` client can join
+  this contest, no custom rule registration. The BSO-gated variant used a vendored
+  `erc20-balance` rule (see git history / test-1) registered via `PubsubVoter({ rules })`.
+- **The burner key lives in localStorage** (`bso-vote:burner-private-key`), unencrypted.
+  Fine for a gasless test vote; never fund that key. Clearing site data discards the
+  identity, orphaning any live vote until it expires.
 - **AutoTLS needs a plain `/ws` listen.** An explicit `/tls/ws` listen creates a
   certificate-less https server that the certificate-provision event refuses to replace,
   and every TLS handshake then fails with alert 40. Listen on `/ws`; the listener
@@ -163,8 +172,9 @@ real even locally). The tally, connectivity, and read-only sync all work without
 - **systemd + nvm**: `npm` isn't on systemd's PATH — the unit runs the precompiled
   `dist-seeder/seeder/seeder.js` with the absolute node binary.
 - **RPCs are consensus-critical**: the RPC URLs live inside the criteria document, which
-  derives the topic. They must be CORS-enabled (browsers call them directly) and
-  archive-capable (verifiers read balances at up to 30-day-old blocks).
+  derives the topic. They must be CORS-enabled (browsers call them directly). With the
+  open gate nothing reads historical balances anymore, but the chain is still where
+  every peer samples bucket blocks, the ballot chainId, and the tie-break hash.
 - **Board names are dangerous**: a vote carrying a `.bso` name is dropped by peers unless
   the name resolves on-chain to the claimed public key. The UI warns accordingly; plain
   public-key votes are always safe.
@@ -174,4 +184,4 @@ real even locally). The tally, connectivity, and read-only sync all work without
 
 ## License
 
-GPL-3.0-or-later (the vendored rule comes from `@bitsocial/pubsub-voting`, GPL-3.0-or-later).
+GPL-3.0-or-later (matching `@bitsocial/pubsub-voting`).

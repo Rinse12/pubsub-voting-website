@@ -10,7 +10,6 @@ import { createHelia } from "helia";
 import { multiaddr } from "@multiformats/multiaddr";
 import { PubsubVoter, topicFor } from "@bitsocial/pubsub-voting";
 import { criteria } from "../shared/criteria.js";
-import { customRules } from "../shared/erc20-balance-rule.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 
@@ -53,7 +52,6 @@ const helia = await createHelia({ libp2p });
 const voter = new PubsubVoter({
     helia,
     chains: chainClientFactory,
-    rules: customRules,
     nameResolvers: makeNameResolvers()
 });
 const topic = await topicFor(criteria);
