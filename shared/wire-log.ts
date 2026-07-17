@@ -115,6 +115,28 @@ export async function extractLiveBundle(messageBytes: Uint8Array): Promise<Downl
     }
 }
 
+/**
+ * Extract a bundle from a standalone bundle block (as written to the blockstore by every
+ * CRDT admission path); undefined for chunk arrays, root manifests, and garbage.
+ */
+export async function extractBundleBlock(blockBytes: Uint8Array): Promise<DownloadedBundle | undefined> {
+    try {
+        const wire = dagCbor.decode<WireBundle>(blockBytes);
+        if (
+            typeof wire !== "object" ||
+            wire === null ||
+            Array.isArray(wire) ||
+            !(wire.address instanceof Uint8Array) ||
+            !Array.isArray(wire.votes) ||
+            typeof wire.signature !== "object"
+        )
+            return undefined;
+        return { cid: await bundleCidForBytes(blockBytes), bundle: wireBundleToDisplay(wire) };
+    } catch {
+        return undefined;
+    }
+}
+
 /** Describe one gossip message on the contest topic (async: a bundle's CID is a hash away). */
 export async function describeGossipMessage(bytes: Uint8Array): Promise<string> {
     try {
