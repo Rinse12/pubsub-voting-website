@@ -1,4 +1,12 @@
-import { PubsubVoter, topicFor, CommunitySchema, type Contest, type Vote } from "@bitsocial/pubsub-voting";
+import {
+    PubsubVoter,
+    topicFor,
+    CommunitySchema,
+    InvalidCommunityNameError,
+    VoteEvictedError,
+    type Contest,
+    type Vote
+} from "@bitsocial/pubsub-voting";
 import { criteria, SECONDS_PER_BLOCK } from "../shared/criteria.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
@@ -130,15 +138,25 @@ function renderTally() {
     const body = $("tally-body");
     body.textContent = "";
     ranking.forEach((row, i) => {
-        // Identity is always publicKey; show the name only once it verified on-chain.
-        const label = row.community.name && row.nameResolved ? row.community.name : shortKey(row.community.publicKey);
         const tr = document.createElement("tr");
-
-        const cells = [String(i + 1), label, String(row.weight), ""];
-        for (const text of cells) {
+        for (const text of [String(i + 1), "", String(row.weight), ""]) {
             const td = document.createElement("td");
             td.textContent = text;
             tr.appendChild(td);
+        }
+        // Board cell: identity is the publicKey (kept in the tooltip); a carried name is
+        // shown right away with its registry-check state. A name that FAILS the check is
+        // never shown — the library evicts that bundle instead of displaying it.
+        const board = tr.children[1] as HTMLTableCellElement;
+        board.title = row.community.publicKey;
+        if (row.community.name) {
+            board.textContent = row.community.name;
+            const tag = document.createElement("span");
+            tag.className = row.nameResolved === true ? "status-ok" : "status-pending";
+            tag.textContent = row.nameResolved === true ? " (name verified)" : " (name unverified)";
+            board.appendChild(tag);
+        } else {
+            board.textContent = shortKey(row.community.publicKey);
         }
         const status = tr.children[3] as HTMLTableCellElement;
         status.innerHTML = row.chainVerified
@@ -189,6 +207,10 @@ async function castVote(votes: Vote[]) {
     try {
         const vote = await voter.createContestVote({ criteria, votes });
         vote.on("publishingstatechange", (state: string) => log(`publishing state: ${state}`));
+        // Post-hoc rejection feedback: fires AFTER publish() resolved if a deferred check
+        // (background gate read / name resolution) evicts this vote. The contest-level
+        // handler owns the visible wallet-card alert; this keeps the debug log complete.
+        vote.on("error", (err: unknown) => log(`vote error: ${err instanceof Error ? err.message : String(err)}`));
         const { recipientCount } = await vote.publish();
         log(`vote published (gossipsub sent it directly to ${recipientCount} peer${recipientCount === 1 ? "" : "s"})`);
         const address = signer.connectedAddress;
@@ -207,7 +229,11 @@ async function castVote(votes: Vote[]) {
         renderMyVote();
     } catch (err) {
         const message = (err as Error).message ?? String(err);
-        if (message.includes("NoPeersSubscribedToTopic") || message.includes("no peers"))
+        if (err instanceof InvalidCommunityNameError)
+            // publish() preflighted the name and refused before signing: it provably does
+            // not resolve to the claimed key, so every peer would silently drop the vote.
+            showWalletError(`Vote refused: ${message}`);
+        else if (message.includes("NoPeersSubscribedToTopic") || message.includes("no peers"))
             log("publish failed: not connected to any topic peer yet — wait for the seeder connection and retry.");
         else log(`publish failed: ${message}`);
     } finally {
@@ -355,7 +381,21 @@ async function main() {
         void refreshCheckpointBundles(helia.blockstore);
     });
     renderBundles();
-    contest.on("error", (err: unknown) => log(`contest error (retrying): ${err instanceof Error ? err.message : String(err)}`));
+    contest.on("error", (err: unknown) => {
+        // Our own published vote failed a deferred check (gate read or name resolution) and
+        // was evicted — every honest peer drops it the same way, so it counts nowhere. Show
+        // it where the user acted (the wallet card) and retract the stale "Your vote" card.
+        if (err instanceof VoteEvictedError) {
+            showWalletError(`Your vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`);
+            const address = err.bundle.address;
+            if (address.toLowerCase() === signer.connectedAddress?.toLowerCase()) {
+                localStorage.removeItem(myVoteKey(address));
+                renderMyVote();
+            }
+            return;
+        }
+        log(`contest error (retrying): ${err instanceof Error ? err.message : String(err)}`);
+    });
     await contest.update();
     booted = true;
     log("joined the contest topic; syncing votes…");

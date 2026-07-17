@@ -4,23 +4,29 @@ import type { Criteria } from "@bitsocial/pubsub-voting";
  * The contest configuration, shared byte-identically by the web client and the seeder.
  *
  * The pubsub topic is derived from this document's canonical dag-cbor CID
- * (topic = "bitsocial-votes/" + CID). ANY change here — including the RPC URLs — changes
+ * (topic = "bitsocial-votes/" + CID). ANY change to the `criteria` object below changes
  * the topic and forks the contest, so the site and the seeder must always ship the same
- * document.
+ * document. Since pubsub-voting 0.1.x, RPC URLs are deliberately NOT part of the document
+ * (see ETH_RPC_URLS below) — an operator can swap a dead provider without forking.
  */
 
 /**
- * Public, CORS-enabled Ethereum mainnet RPCs. With the open `constant` gate there are no
- * balance reads, but the chain is still consensus-critical: the first entry in
- * `requires.chains` is where every peer samples the bucket block (vote freshness/expiry),
- * the chainId bound into each EIP-712 ballot, and the tally's tie-break block hash.
+ * Public, CORS-enabled Ethereum mainnet RPCs. Client-local transport configuration — NOT
+ * part of the criteria bytes (pubsub-voting 0.1.x moved endpoints out of the document):
+ * these feed the chain-client factory (shared/chains.ts) and the .bso name resolvers
+ * (shared/resolvers.ts). With the open `constant` gate there are no balance reads, but the
+ * chain is still consensus-critical: `requires.chains.eth` is where every peer samples the
+ * bucket block (vote freshness/expiry), the chainId bound into each EIP-712 ballot, and
+ * the tally's tie-break block hash.
  */
 export const ETH_RPC_URLS = ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"] as const;
 
 export const criteria: Criteria = {
     name: "BSO board vote (test)",
     // Distinct contestId per contest; bump the suffix to start a fresh contest.
-    contestId: "bso-board-vote-test-2",
+    // test-3: the pubsub-voting 0.1.x criteria schema (rpcUrls removed from the document)
+    // re-derives the topic anyway, so the id marks the fork honestly.
+    contestId: "bso-board-vote-test-3",
     // v1 upvote-only: each vote value is exactly 1.
     voteSchema: { min: 1, max: 1 },
     // One board choice per wallet; publishing again replaces the previous vote (LWW).
@@ -39,9 +45,9 @@ export const criteria: Criteria = {
     requires: {
         // Built-ins only: any stock @bitsocial/pubsub-voting client can join this contest.
         rules: ["constant"],
-        // Still required: a chainless rule falls back to the first configured chain for
-        // bucket sampling, the ballot chainId, and the tie-break hash.
-        chains: { eth: { chainId: 1, rpcUrls: [...ETH_RPC_URLS] } }
+        // Ticker + chainId only (consensus-critical); which RPC gateway serves the reads
+        // is each client's own choice via the ChainClientFactory.
+        chains: { eth: { chainId: 1 } }
     }
 };
 
