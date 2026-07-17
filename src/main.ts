@@ -6,6 +6,7 @@ import {
     decodeChunkBundles,
     describeGossipMessage,
     describeRootRecord,
+    extractBundleBlock,
     extractLiveBundle,
     parseRootRecord,
     type DownloadedBundle
@@ -46,32 +47,47 @@ const signer = new BrowserWalletSigner();
 let voter: PubsubVoter;
 let contest: Contest;
 let publishing = false;
+let booted = false; // set once the initial contest.update() (join + snapshot restore) resolves
 
 /* ---------- downloaded vote bundles (debug panel) ----------
- * Every signed bundle this tab has seen, by CID: live-delta gossip messages decode
- * straight from the wire; checkpoint bundles are read back from the Helia blockstore
- * via the chunk CIDs the last fetched root record advertised (the chase stores the
- * blocks there — and if it hasn't yet, the timed-out get just retries on the next
- * tally update). */
-const downloadedBundles = new Map<string, unknown>();
+ * Every signed bundle this tab has admitted, by CID, tagged with how it arrived. Two
+ * exact wire taps (live-delta gossip messages; checkpoint chunks read back via the chunk
+ * CIDs the last fetched root record advertised — retried on the next tally update if the
+ * chase hasn't stored them yet) plus a catch-all tap on helia.blockstore.put, which every
+ * CRDT admission path writes the standalone bundle block through. The put tap's source is
+ * inferred from context (local vote / snapshot restore / chase), so an exact tag may
+ * upgrade an inferred one when both see the same bundle. */
+type BundleSource = "live gossip" | "checkpoint chunk" | "local vote" | "snapshot restore" | "chase";
+const INFERRED_SOURCES = new Set<BundleSource>(["snapshot restore", "chase"]);
+const downloadedBundles = new Map<string, { bundle: unknown; source: BundleSource }>();
 let checkpointChunks: CID[] = [];
 
 function renderBundles() {
-    $("bundles-summary").textContent = `Downloaded vote bundles (${downloadedBundles.size})`;
+    const bySource = new Map<BundleSource, number>();
+    for (const { source } of downloadedBundles.values()) bySource.set(source, (bySource.get(source) ?? 0) + 1);
+    const breakdown = [...bySource.entries()].map(([source, count]) => `${count} ${source}`).join(", ");
+    $("bundles-summary").textContent = `Downloaded vote bundles (${downloadedBundles.size}${breakdown ? ` — ${breakdown}` : ""})`;
     $("bundles-json").textContent =
         downloadedBundles.size === 0
             ? "none yet"
             : JSON.stringify(
-                  [...downloadedBundles.entries()].map(([cid, bundle]) => ({ cid, bundle })),
+                  [...downloadedBundles.entries()].map(([cid, { source, bundle }]) => ({ cid, source, bundle })),
                   null,
                   2
               );
 }
 
-function addBundle({ cid, bundle }: DownloadedBundle) {
-    if (downloadedBundles.has(cid)) return;
-    downloadedBundles.set(cid, bundle);
-    log(`vote bundle downloaded: cid ${cid}`);
+function addBundle({ cid, bundle }: DownloadedBundle, source: BundleSource) {
+    const existing = downloadedBundles.get(cid);
+    if (existing) {
+        // An exact tap may correct an inferred tag; nothing else changes an entry.
+        if (!INFERRED_SOURCES.has(existing.source) || INFERRED_SOURCES.has(source)) return;
+        existing.source = source;
+        renderBundles();
+        return;
+    }
+    downloadedBundles.set(cid, { bundle, source });
+    log(`vote bundle downloaded (${source}): cid ${cid}`);
     renderBundles();
 }
 
@@ -79,7 +95,7 @@ async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { sig
     for (const chunk of checkpointChunks) {
         try {
             const bytes = (await blockstore.get(chunk, { signal: AbortSignal.timeout(10_000) })) as Uint8Array;
-            for (const item of await decodeChunkBundles(bytes)) addBundle(item);
+            for (const item of await decodeChunkBundles(bytes)) addBundle(item, "checkpoint chunk");
         } catch {
             // Chunk not chased/served yet — the next tally update retries.
         }
@@ -259,7 +275,7 @@ async function main() {
         void (async () => {
             log(`gossip from ${detail.from ?? "(unsigned)"}: ${await describeGossipMessage(detail.data)}`);
             const live = await extractLiveBundle(detail.data);
-            if (live) addBundle(live);
+            if (live) addBundle(live, "live gossip");
         })();
     });
     const fetchSvc = libp2p.services.fetch as {
@@ -282,6 +298,28 @@ async function main() {
             log(`checkpoint fetch failed: ${(err as Error).message}`);
             throw err;
         }
+    };
+
+    /* Catch-all bundle tap: every CRDT admission path (live accept, chase, local publish,
+     * snapshot restore) writes the standalone bundle block through this put, and the
+     * library's blockstore adapter dispatches dynamically so a wrapper installed here is
+     * honoured. The source is inferred from context; the exact taps above may upgrade it. */
+    const putSource = (bundle: unknown): BundleSource => {
+        const address = (bundle as { address?: string }).address;
+        if (publishing && address && address === signer.connectedAddress?.toLowerCase()) return "local vote";
+        if (!booted) return "snapshot restore";
+        return "chase";
+    };
+    const blockstore = helia.blockstore as { put(cid: CID, bytes: Uint8Array, opts?: unknown): Promise<CID> };
+    const realPut = blockstore.put.bind(blockstore);
+    blockstore.put = async (cid, bytes, opts) => {
+        const result = await realPut(cid, bytes, opts);
+        // Fire-and-forget so the tap can never slow or break admission.
+        void (async () => {
+            const item = await extractBundleBlock(bytes);
+            if (item) addBundle(item, putSource(item.bundle));
+        })();
+        return result;
     };
 
     let seederConnected = false;
@@ -319,6 +357,7 @@ async function main() {
     renderBundles();
     contest.on("error", (err: unknown) => log(`contest error (retrying): ${err instanceof Error ? err.message : String(err)}`));
     await contest.update();
+    booted = true;
     log("joined the contest topic; syncing votes…");
 
     /* wire UI events */
