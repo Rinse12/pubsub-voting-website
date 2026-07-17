@@ -33,7 +33,9 @@
                     <p class="hint">
                         The topic is <code>bitsocial-votes/&lt;CID&gt;</code>, where the CID is the hash of this
                         exact document (canonical dag-cbor). Every peer validates votes against these rules, so
-                        changing any byte — even an RPC URL — forks the contest onto a different topic.
+                        changing any byte forks the contest onto a different topic. RPC endpoints are deliberately
+                        <em>not</em> part of the document — each client picks its own, so a dead provider can be
+                        swapped without forking.
                     </p>
                     <pre id="criteria-json">—</pre>
                 </details>

@@ -131,12 +131,15 @@ site uses the library as-is with no join-ordering workaround.
 
 ### Changing the contest rules
 
-Anything in [shared/criteria.ts](shared/criteria.ts) (gate rule, RPCs, expiry,
-`contestId`) changes the criteria bytes and therefore **forks the topic** — old votes
-don't carry over. Redeploy the site and restart the seeder together. History: contest
+Anything in the `criteria` object in [shared/criteria.ts](shared/criteria.ts) (gate
+rule, expiry, `contestId`) changes the criteria bytes and therefore **forks the
+topic** — old votes don't carry over. (`ETH_RPC_URLS` in the same file is client-local
+transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy the site and restart the seeder together. History: contest
 `bso-board-vote-test-1` (topic `…zm7ardh7tfnccgwhulil63ybopugfh2d4`) was gated on
 holding ≥ 1 BSO (`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`) via a vendored
-`erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers.
+`erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers;
+`bso-board-vote-test-3` marks the fork forced by the 0.1.x criteria schema (`rpcUrls`
+removed from the document re-derives the topic regardless).
 
 ## Local development
 
@@ -171,10 +174,12 @@ browser-generated burner, so the full flow is testable locally.
   provisioned seconds after.
 - **systemd + nvm**: `npm` isn't on systemd's PATH — the unit runs the precompiled
   `dist-seeder/seeder/seeder.js` with the absolute node binary.
-- **RPCs are consensus-critical**: the RPC URLs live inside the criteria document, which
-  derives the topic. They must be CORS-enabled (browsers call them directly). With the
-  open gate nothing reads historical balances anymore, but the chain is still where
-  every peer samples bucket blocks, the ballot chainId, and the tie-break hash.
+- **RPC URLs are client-local, not consensus bytes**: since pubsub-voting 0.1.x the
+  criteria document pins only `chains: { eth: { chainId: 1 } }`; `ETH_RPC_URLS` is each
+  client's own transport config, swappable without forking the topic. They must be
+  CORS-enabled (browsers call them directly). The chain itself is still
+  consensus-critical: it's where every peer samples bucket blocks, the ballot chainId,
+  and the tie-break hash.
 - **Board names are dangerous**: a vote carrying a `.bso` name is dropped by peers unless
   the name resolves on-chain to the claimed public key. The UI warns accordingly; plain
   public-key votes are always safe.
