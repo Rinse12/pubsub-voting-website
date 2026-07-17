@@ -99,8 +99,10 @@
                         <input id="board-name" placeholder="example.bso" autocomplete="off" spellcheck="false" />
                     </label>
                     <p class="hint">
-                        A name is a verified claim: peers resolve it on-chain and <strong>drop the vote</strong> if it
-                        doesn't resolve to this exact public key.
+                        A name is a verified claim: it must resolve on-chain to this exact public key. A name that
+                        provably doesn't is <strong>refused before signing</strong>, with the reason shown above. If
+                        the registry is unreachable the vote publishes anyway and is re-checked in the background —
+                        you'll see a rejection here if that check fails.
                     </p>
                     <button type="submit">Sign &amp; publish vote</button>
                 </form>
