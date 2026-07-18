@@ -3,19 +3,22 @@
 **Live site: <https://bso-board-vote.netlify.app>**
 
 A static website where people vote over libp2p **pubsub** — no server counts the votes.
-The contest is **open: any EVM wallet gets exactly one vote** (the built-in `constant`
-rule as the gate — no token, no gas; knowingly sybil-open because this test wants
-maximum participation). Visitors without an extension wallet can have the page
-**generate a burner wallet in the browser** (key persisted in localStorage). Voters pick
-an existing board from the live tally or submit a new board (a `12D3KooW…` public key,
-optionally a verified `.bso` name).
+The contest is **NFT-gated: one vote per wallet holding at least one 5chan Pass**, the
+[FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9)
+(`erc721-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
+still costs no gas). Every peer reads the voter's `balanceOf` at the contest's pinned
+bucket block before counting the vote, so an ineligible wallet's ballot is dropped by
+the whole network, not by a moderator. Visitors without an extension wallet can have the
+page **generate a burner wallet in the browser** (key persisted in localStorage) and ask
+the Pass owner to airdrop to it. Voters pick an existing board from the live tally or
+submit a new board (a `12D3KooW…` public key, optionally a verified `.bso` name).
 
 Built on [`@bitsocial/pubsub-voting`](https://github.com/bitsocialnet/pubsub-voting):
 votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic derived
 from the contest rules, validated by every peer (signature + bucketed-block freshness)
 **before** re-forwarding, and merged with a last-write-wins CRDT.
 
-Contest topic: `bitsocial-votes/bafyreih53ht6eu6zeup7rfn7yxomvxo35tfkd3zadacxq66kr62pip47ay`
+Contest topic: `bitsocial-votes/bafyreicyjfqthbsnspmqffnbbv4jvxymimso3z4pgizysrs5qulu6jz5nq`
 
 ## Architecture
 
@@ -30,7 +33,7 @@ Netlify (static HTML/JS)                     new-plebbit (89.36.231.48)
         ▲    ▲                              │    cold-joining browsers       │
         │    └── other browsers, meshed     └────────────────────────────────┘
         │        through the seeder
-        └── Ethereum mainnet RPC (bucket-block head reads; no balance checks)
+        └── Base Sepolia RPC (bucket-block reads + 5chan Pass balanceOf gate reads)
 ```
 
 Browsers can't accept inbound connections, so they all dial the seeder's WSS address
@@ -48,8 +51,9 @@ peers noticing — validation is done by every participant.
    criteria CID) and the wallet signs it (EIP-712; a popup for injected wallets,
    silent for burners).
 3. The signed bundle is gossiped on the topic. Every receiving peer recovers the signer
-   address from the signature and checks the ballot's bucket freshness; the open
-   `constant` gate admits every address, so no balance is read.
+   address from the signature, checks the ballot's bucket freshness, and reads the
+   wallet's 5chan Pass `balanceOf` at the bucket block on Base Sepolia — a wallet
+   holding none has its vote dropped before it is re-forwarded.
 4. One wallet, one vote: a newer ballot from the same wallet replaces the older one
    (last-write-wins), and an empty ballot withdraws.
 5. Votes expire after ~30 days (`voteExpiryBuckets`); voters keep a vote alive by simply
@@ -151,16 +155,21 @@ AUTO_TLS=off npm run seeder    # local seeder: plain ws on 127.0.0.1:4003, no ce
 npm run dev                    # plain ws works from http://localhost
 ```
 
-Casting a vote end-to-end needs no tokens — any wallet works, including the
-browser-generated burner, so the full flow is testable locally.
+Casting a vote end-to-end needs no gas, but counting one needs a 5chan Pass: a wallet
+without the NFT can sign and publish, and every peer (including your own second browser
+tab) will drop the ballot at the gate — which is itself a useful thing to test locally.
 
 ## Notable implementation choices & gotchas
 
-- **The gate is the built-in `constant` rule** — deliberately sybil-open for this test
-  (wallets are free to generate; the burner button makes that one click). A nice side
-  effect of using only built-ins: any stock `@bitsocial/pubsub-voting` client can join
-  this contest, no custom rule registration. The BSO-gated variant used a vendored
-  `erc20-balance` rule (see git history / test-1) registered via `PubsubVoter({ rules })`.
+- **The gate is the built-in `erc721-min-balance` rule** — hold ≥ 1
+  [5chan Pass](https://sepolia.basescan.org/address/0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9)
+  on Base Sepolia (testnet NFT, minted for free by its owner from the
+  `testnet_5chan_pass` project; duplicate an address there to stack passes). Both
+  configured RPCs serve archive state, which the pinned bucket-block reads require.
+  Still built-ins only, so any stock `@bitsocial/pubsub-voting` client can join this
+  contest, no custom rule registration. Earlier forks of this contest used the open
+  `constant` gate (test-3) and a vendored `erc20-balance` rule (test-1; see git
+  history).
 - **The burner key lives in localStorage** (`bso-vote:burner-private-key`), unencrypted.
   Fine for a gasless test vote; never fund that key. Clearing site data discards the
   identity, orphaning any live vote until it expires.

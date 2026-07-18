@@ -9,11 +9,11 @@
     <body>
         <main>
             <header>
-                <h1>BSO board vote</h1>
+                <h1>5chan Pass board vote</h1>
                 <p class="sub">
-                    Trustless voting over libp2p pubsub. <strong>Any EVM wallet</strong> gets exactly one vote — no
-                    tokens, no gas — signed in your browser, verified by every peer, counted with no server. No wallet
-                    installed? The page can generate one for you.
+                    Trustless voting over libp2p pubsub. <strong>Every wallet holding a 5chan Pass</strong> (a free
+                    testnet NFT on Base Sepolia) gets exactly one vote — no gas, no transaction — signed in your
+                    browser, verified by every peer against the chain, counted with no server.
                 </p>
             </header>
 
@@ -49,10 +49,12 @@
                 <h2>Wallet</h2>
                 <p class="hint">
                     Why a wallet? Your vote is an EIP-712 message and the signature <em>is</em> your voter identity —
-                    a free signature, never a transaction. This test contest is open: every wallet is eligible.
-                    Connect an extension wallet (MetaMask etc.), or generate a throwaway wallet that lives only in
-                    this browser — it is saved here and restored automatically on your next visit, until you forget
-                    it (or clear site data).
+                    a free signature, never a transaction. This test contest is gated: only wallets holding a
+                    <strong>5chan Pass</strong> (ERC-721 on Base Sepolia) are eligible — every peer reads your
+                    balance on-chain before counting your vote. Connect the wallet that received the Pass
+                    (MetaMask etc.), or generate a throwaway wallet in this browser and ask the Pass owner to
+                    airdrop to it — it is saved here and restored automatically on your next visit, until you
+                    forget it (or clear site data).
                 </p>
                 <div class="row">
                     <button id="connect-btn">Connect wallet</button>
