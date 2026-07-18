@@ -95,8 +95,21 @@ function addBundle({ cid, bundle }: DownloadedBundle, source: BundleSource) {
         return;
     }
     downloadedBundles.set(cid, { bundle, source });
-    log(`vote bundle downloaded (${source}): cid ${cid}`);
+    log(`vote bundle downloaded (${source}): ${describeBundleContent(bundle)} — cid ${cid}`);
     renderBundles();
+}
+
+/** One line of WHO voted for WHAT, from a decoded display bundle; best-effort. */
+function describeBundleContent(bundle: unknown): string {
+    try {
+        const b = bundle as { address?: string; votes?: { community: { name?: string; publicKey: string }; vote: number }[] };
+        const votes = (b.votes ?? [])
+            .map((v) => `${v.community.name ?? shortKey(v.community.publicKey)}:${v.vote >= 0 ? "+" : ""}${v.vote}`)
+            .join(", ");
+        return `${b.address ?? "(unknown address)"} → [${votes}]`;
+    } catch {
+        return "(undecodable)";
+    }
 }
 
 async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { signal?: AbortSignal }): unknown }) {
@@ -212,7 +225,15 @@ async function castVote(votes: Vote[]) {
         // handler owns the visible wallet-card alert; this keeps the debug log complete.
         vote.on("error", (err: unknown) => log(`vote error: ${err instanceof Error ? err.message : String(err)}`));
         const { recipientCount } = await vote.publish();
-        log(`vote published (gossipsub sent it directly to ${recipientCount} peer${recipientCount === 1 ? "" : "s"})`);
+        // Name WHAT was voted for — a log full of anonymous "vote published" lines is
+        // useless when several votes fly in one session.
+        const votedFor = votes
+            .map((v) => `${v.community.name ?? shortKey(v.community.publicKey)}:${v.vote >= 0 ? "+" : ""}${v.vote}`)
+            .join(", ");
+        log(
+            `vote published for [${votedFor || "(empty ballot — retracts previous vote)"}] by ${signer.connectedAddress} ` +
+                `(gossipsub sent it directly to ${recipientCount} peer${recipientCount === 1 ? "" : "s"})`
+        );
         const address = signer.connectedAddress;
         if (address) {
             if (votes.length === 0) localStorage.removeItem(myVoteKey(address));
