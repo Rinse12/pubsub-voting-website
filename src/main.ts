@@ -7,6 +7,7 @@ import {
     type Contest,
     type Vote
 } from "@bitsocial/pubsub-voting";
+import { erc721Abi } from "viem";
 import { criteria, SECONDS_PER_BLOCK } from "../shared/criteria.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
@@ -201,9 +202,33 @@ function renderWallet(address: `0x${string}`) {
     $("wallet-address").textContent = address;
     $("wallet-kind").textContent =
         signer.kind === "burner" ? "burner — generated and stored in this browser" : "injected (MetaMask etc.)";
-    // The contest gate is the open `constant` rule: every wallet is eligible.
-    $("wallet-eligible").innerHTML = `<span class="badge-ok">yes — any wallet can vote</span>`;
+    // The contest gate is `erc721-min-balance`: the wallet must hold a 5chan Pass.
+    // Show the live balance read; peers verify the same read at the bucket block.
+    $("wallet-eligible").textContent = "checking 5chan Pass balance…";
+    void renderEligibility(address);
     renderMyVote();
+}
+
+async function renderEligibility(address: `0x${string}`) {
+    const gate = criteria.rule as unknown as { contract: `0x${string}`; min: number };
+    try {
+        const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
+        if (!chain) throw new Error("no Base Sepolia chain client configured");
+        const balance = await chain.readContract({
+            address: gate.contract,
+            abi: erc721Abi,
+            functionName: "balanceOf",
+            args: [address]
+        });
+        if (signer.connectedAddress !== address) return; // wallet changed mid-read
+        $("wallet-eligible").innerHTML =
+            balance >= BigInt(gate.min)
+                ? `<span class="badge-ok">yes — holds ${balance} 5chan Pass${balance === 1n ? "" : "es"}</span>`
+                : `<span class="badge-bad">no — holds no 5chan Pass (peers will drop this wallet's votes; ask the owner for an airdrop)</span>`;
+    } catch (err) {
+        if (signer.connectedAddress !== address) return;
+        $("wallet-eligible").textContent = `balance check failed (${err instanceof Error ? err.message : String(err)}) — you can still vote; peers do their own read`;
+    }
 }
 
 /* ---------- voting ---------- */
