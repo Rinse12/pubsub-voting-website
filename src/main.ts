@@ -187,9 +187,16 @@ function renderTally() {
     });
 }
 
+/** Burner button labels track whether a key is stored; the forget button only shows then. */
+function refreshBurnerButtons() {
+    const stored = BrowserWalletSigner.hasStoredBurner();
+    $("burner-btn").textContent = stored ? "Use my browser wallet" : "No wallet? Generate one in this browser";
+    $("forget-btn").hidden = !stored;
+}
+
 function renderWallet(address: `0x${string}`) {
     $("wallet-error").hidden = true;
-    $("connect-btn").textContent = "Reconnect wallet";
+    $("connect-btn").textContent = signer.kind === "injected" ? "Reconnect wallet" : "Connect wallet";
     $("wallet-info").hidden = false;
     $("wallet-address").textContent = address;
     $("wallet-kind").textContent =
@@ -291,6 +298,60 @@ async function main() {
     $("topic").textContent = topic;
     $("criteria-json").textContent = JSON.stringify(criteria, null, 2);
     log(`contest topic: ${topic}`);
+
+    /* Wallet buttons + restore, before the network sync below: none of this needs the
+     * voter, and a returning visitor should see their identity without waiting or clicking.
+     * The restore waits for the topic above only because renderMyVote reads the
+     * topic-scoped my-vote record. */
+    if (BrowserWalletSigner.hasStoredBurner()) {
+        const address = signer.useBurner();
+        log(`browser wallet restored from a previous visit: ${address}`);
+        renderWallet(address);
+    }
+    refreshBurnerButtons();
+    $("connect-btn").onclick = async () => {
+        try {
+            const address = await signer.connectInjected();
+            log(`wallet connected: ${address}`);
+            renderWallet(address);
+        } catch (err) {
+            showWalletError(`Wallet connect failed: ${(err as Error).message}`);
+        }
+    };
+    $("burner-btn").onclick = () => {
+        try {
+            const existing = BrowserWalletSigner.hasStoredBurner();
+            const address = signer.useBurner();
+            log(
+                existing
+                    ? `browser wallet loaded: ${address}`
+                    : `browser wallet generated: ${address} (key saved in this browser's localStorage)`
+            );
+            refreshBurnerButtons();
+            renderWallet(address);
+        } catch (err) {
+            log(`browser wallet failed: ${(err as Error).message}`);
+        }
+    };
+    $("forget-btn").onclick = () => {
+        if (
+            !window.confirm(
+                "Delete the wallet key stored in this browser? This is permanent — without the key you can never change or withdraw a vote cast with this address."
+            )
+        )
+            return;
+        const wasActive = signer.kind === "burner";
+        const address = signer.forgetBurner();
+        // The my-vote record is keyed by that address, which can never be active again.
+        if (address) localStorage.removeItem(myVoteKey(address));
+        refreshBurnerButtons();
+        if (wasActive) {
+            $("wallet-info").hidden = true;
+            $("connect-btn").textContent = "Connect wallet";
+            renderMyVote();
+        }
+        log(address ? `browser wallet deleted: ${address}` : "no stored browser wallet to delete");
+    };
 
     /* ---------- connectivity diagnostics ----------
      * Everything vote-sync does rides three observable seams: connections, gossipsub
@@ -421,33 +482,7 @@ async function main() {
     booted = true;
     log("joined the contest topic; syncing votes…");
 
-    /* wire UI events */
-    if (BrowserWalletSigner.hasStoredBurner()) $("burner-btn").textContent = "Use my browser wallet";
-    $("connect-btn").onclick = async () => {
-        try {
-            const address = await signer.connectInjected();
-            log(`wallet connected: ${address}`);
-            renderWallet(address);
-        } catch (err) {
-            showWalletError(`Wallet connect failed: ${(err as Error).message}`);
-        }
-    };
-    $("burner-btn").onclick = () => {
-        try {
-            const existing = BrowserWalletSigner.hasStoredBurner();
-            const address = signer.useBurner();
-            log(
-                existing
-                    ? `browser wallet loaded: ${address}`
-                    : `browser wallet generated: ${address} (key saved in this browser's localStorage)`
-            );
-            $("burner-btn").textContent = "Use my browser wallet";
-            renderWallet(address);
-        } catch (err) {
-            log(`browser wallet failed: ${(err as Error).message}`);
-        }
-    };
-
+    /* wire the voting UI (needs the voter, so only after boot) */
     $<HTMLFormElement>("new-board-form").onsubmit = (e) => {
         e.preventDefault();
         const publicKey = $<HTMLInputElement>("board-key").value.trim();
