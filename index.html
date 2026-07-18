@@ -51,11 +51,13 @@
                     Why a wallet? Your vote is an EIP-712 message and the signature <em>is</em> your voter identity —
                     a free signature, never a transaction. This test contest is open: every wallet is eligible.
                     Connect an extension wallet (MetaMask etc.), or generate a throwaway wallet that lives only in
-                    this browser (clearing site data discards it).
+                    this browser — it is saved here and restored automatically on your next visit, until you forget
+                    it (or clear site data).
                 </p>
                 <div class="row">
                     <button id="connect-btn">Connect wallet</button>
                     <button id="burner-btn">No wallet? Generate one in this browser</button>
+                    <button id="forget-btn" class="danger" hidden>Forget browser wallet</button>
                 </div>
                 <p id="wallet-error" role="alert" hidden></p>
                 <dl class="kv" id="wallet-info" hidden>

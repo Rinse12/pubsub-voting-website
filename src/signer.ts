@@ -13,8 +13,9 @@ import { EIP712_SIGNATURE_TYPE, type BallotTypedData, type Signature, type VoteS
  *
  * The burner is a plain secp256k1 key generated with viem and persisted in
  * localStorage, so the same browser keeps the same voter identity across visits
- * (needed to replace/withdraw a previous vote — LWW is keyed by address). Clearing
- * site data discards that identity; fine for a test contest, never fund this key.
+ * (needed to replace/withdraw a previous vote — LWW is keyed by address). The page
+ * restores it automatically on load; `forgetBurner` deletes it on request. Clearing
+ * site data discards that identity too; fine for a test contest, never fund this key.
  *
  * The signer is handed to PubsubVoter at construction but delegates lazily, so the
  * voter is constructed once at page load and only actually needs the wallet when a
@@ -76,6 +77,18 @@ export class BrowserWalletSigner implements VoteSigner {
         const account = privateKeyToAccount(privateKey);
         this.active = { kind: "burner", account };
         return account.address;
+    }
+
+    /**
+     * Delete the persisted burner key (deactivating it if it is the active wallet).
+     * Irreversible: without the key the address can never sign again, so a vote cast
+     * with it can no longer be replaced or withdrawn. Returns the discarded address.
+     */
+    forgetBurner(): `0x${string}` | undefined {
+        const privateKey = localStorage.getItem(BURNER_KEY_STORAGE) as `0x${string}` | null;
+        localStorage.removeItem(BURNER_KEY_STORAGE);
+        if (this.active?.kind === "burner") this.active = undefined;
+        return privateKey ? privateKeyToAccount(privateKey).address : undefined;
     }
 
     address(): string {
