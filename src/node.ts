@@ -5,7 +5,7 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
 import { gossipsub } from "@libp2p/gossipsub";
 import { fetch as fetchService } from "@libp2p/fetch";
-import { delegatedRoutingV1HttpApiClient } from "@helia/delegated-routing-v1-http-api-client";
+import { faultTolerantDelegatedRouting } from "./routing.js";
 import { createHelia, type Helia } from "helia";
 import { criteriaCid } from "@bitsocial/pubsub-voting";
 import { criteria } from "../shared/criteria.js";
@@ -21,7 +21,7 @@ import { DISCOVERY_TIMEOUT_MS, HTTP_ROUTER_URLS, REDIAL_INTERVAL_MS } from "./co
  */
 export async function startBrowserNode(): Promise<Helia> {
     const routers = Object.fromEntries(
-        HTTP_ROUTER_URLS.map((url, i) => [`delegatedRouting${i}`, delegatedRoutingV1HttpApiClient({ url })])
+        HTTP_ROUTER_URLS.map((url, i) => [`delegatedRouting${i}`, faultTolerantDelegatedRouting(url)])
     );
     const libp2p = await createLibp2p({
         transports: [webSockets()],
@@ -83,6 +83,7 @@ export function keepSeederConnected(helia: Helia, onChange: (connected: boolean,
                     onChange(true);
                     return;
                 } catch (err) {
+                    console.warn(`seeder dial failed (${provider.id}): ${(err as Error).message}`);
                     lastError = err as Error;
                 }
             }

@@ -13,5 +13,5 @@
     "useDefineForClassFields": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "shared", "seeder", "scripts", "vite.config.ts"]
+  "include": ["src", "shared", "scripts", "tests", "vite.config.ts"]
 }

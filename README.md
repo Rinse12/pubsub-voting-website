@@ -65,9 +65,15 @@ peers noticing — validation is done by every participant.
 shared/    criteria document (defines the contest AND the topic), viem chain
            factory, .bso name resolvers, wire-log decoders
 src/       the website: in-browser Helia/libp2p node, injected+burner wallet signer, UI
-seeder/    the always-on node: AutoTLS/WSS seeder script + systemd unit
 scripts/   derive-topic.ts — validate criteria + print the topic (npm run topic)
+tests/     regression tests (npm test)
 ```
+
+The always-on seeder is **not** in this repo: seeding is done by
+[bitsocial-seeder](https://github.com/bitsocialnet/bitsocial-seeder) (branch
+`seed-pubsub-votes`), driven by a manifest that embeds this repo's criteria document.
+An earlier in-repo `seeder/` was deleted once bitsocial-seeder took over — it's in git
+history if ever needed.
 
 ## Operations
 
@@ -79,40 +85,36 @@ npm run build
 npx netlify-cli deploy --prod --dir dist --no-build   # site: bso-board-vote
 ```
 
-### The seeder (new-plebbit)
+### The seeder (bitsocial-seeder on new-plebbit)
 
-Runs as systemd unit `pubsub-voting-seeder` from `/root/pubsub-voting-website`
-(see [seeder/pubsub-voting-seeder.service](seeder/pubsub-voting-seeder.service)).
+The canonical seeder is the `bitsocial-seeder` systemd unit on new-plebbit (checkout
+`/root/bitsocial-seeder`, branch `seed-pubsub-votes`, data in
+`/root/bitsocial-seeder-data`). It derives the topic from
+`/root/bitsocial-seeder/bso-board-vote-manifest.jsonc`, which must stay in sync with
+[shared/criteria.ts](shared/criteria.ts) — any criteria change means updating the
+manifest AND redeploying the site (the topic forks, see below).
 
 ```bash
 ssh new-plebbit
-journalctl -fu pubsub-voting-seeder          # watch tally updates / cert renewals
-tail -f /root/pubsub-voting-website/seeder-data/seeder.log   # same lines, plain file
-systemctl restart pubsub-voting-seeder       # after code changes: recompile first:
-cd /root/pubsub-voting-website && ./node_modules/.bin/tsc -p tsconfig.seeder.json
+journalctl -fu bitsocial-seeder              # votes lines look like: 0x… votes [board:+1]
+systemctl restart bitsocial-seeder
 ```
 
-The seeder logs connection open/close, contest-topic subscribe/unsubscribe, gossip
-messages on the topic, checkpoint (root record) fetch serves, and tally updates — to
-stdout (journald) and to `seeder-data/seeder.log` (rotated once at 10 MB). Gossip
-messages and served root records are logged **decoded** ([shared/wire-log.ts](shared/wire-log.ts)),
-not just as byte counts: a root record line shows `count` (vote bundles), checkpoint
-size, and the full root CID. `0 vote bundle(s)` means the contest is genuinely empty —
-82 bytes with root `bafyreie3lvfqun…` is the canonical empty record, not a load
-failure. Comparing root CIDs across peers' log lines settles any divergence question:
-a peer that hears a root differing from its own answers with its own record within
-seconds, so matching roots everywhere ⇒ the whole topic shares one state. The website
-logs the same decoded lines (plus its `tally update`) in the on-page log.
-
-Do **not** delete `seeder-data/peer.key`: the peer id determines the
-`….libp2p.direct` hostname and the multiaddr baked into `src/config.ts`.
+Reading the site's on-page log: gossip messages and served root records are logged
+**decoded** ([shared/wire-log.ts](shared/wire-log.ts)), not just as byte counts — a
+root record line shows `count` (vote bundles), checkpoint size, and the full root CID.
+`0 vote bundle(s)` means the contest is genuinely empty — 82 bytes with root
+`bafyreie3lvfqun…` is the canonical empty record, not a load failure. Comparing root
+CIDs across peers settles any divergence question: a peer that hears a root differing
+from its own answers with its own record within seconds, so matching roots everywhere
+⇒ the whole topic shares one state.
 
 **Vote state survives restarts** (pubsub-voting ≥ 0.0.10): the seeder persists its
-checkpoint snapshot to `seeder-data/voting/checkpoints.db` (debounced after each
-winner-set change, flushed on SIGTERM) and restores it at join; browser tabs persist
-theirs to IndexedDB (`pubsub-voting-checkpoints`). Historical note: the one vote cast
-before the 0.0.10 deploy (2026-07-16) was permanently lost by a seeder restart —
-builds of that era held the CRDT in memory only.
+checkpoint snapshot (debounced after each winner-set change, flushed on SIGTERM) and
+restores it at join; browser tabs persist theirs to IndexedDB
+(`pubsub-voting-checkpoints`). Historical note: the one vote cast before the 0.0.10
+deploy (2026-07-16) was permanently lost by a seeder restart — builds of that era held
+the CRDT in memory only.
 
 ### Diagnosing "I don't see votes"
 
@@ -121,9 +123,12 @@ and reports how long the tally takes to converge:
 
 ```bash
 npx tsc -p tsconfig.coldtest.json
-WAIT_SUBS=1 node dist-seeder/scripts/cold-join-test.js   # healthy: converges in ~5 s
-node dist-seeder/scripts/cold-join-test.js               # joins as soon as connected
+WAIT_SUBS=1 node dist-coldtest/scripts/cold-join-test.js   # healthy: converges in ~5 s
+node dist-coldtest/scripts/cold-join-test.js               # joins as soon as connected
 ```
+
+It dials the bitsocial-seeder votes node's TCP addr by default; override with
+`SEEDER_ADDR=/…`.
 
 Background: through pubsub-voting 0.0.8 the cold-join pull for past votes ran **once**,
 at topic join, and only asked peers already visible in `getSubscribers(topic)`. A join
@@ -138,7 +143,7 @@ site uses the library as-is with no join-ordering workaround.
 Anything in the `criteria` object in [shared/criteria.ts](shared/criteria.ts) (gate
 rule, expiry, `contestId`) changes the criteria bytes and therefore **forks the
 topic** — old votes don't carry over. (`ETH_RPC_URLS` in the same file is client-local
-transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy the site and restart the seeder together. History: contest
+transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy the site and update the bitsocial-seeder manifest (then restart it) together. History: contest
 `bso-board-vote-test-1` (topic `…zm7ardh7tfnccgwhulil63ybopugfh2d4`) was gated on
 holding ≥ 1 BSO (`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`) via a vendored
 `erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers;
@@ -150,10 +155,15 @@ removed from the document re-derives the topic regardless).
 ```bash
 npm install
 npm run topic                  # validate criteria + print the topic
-AUTO_TLS=off npm run seeder    # local seeder: plain ws on 127.0.0.1:4003, no cert
-# paste its /ip4/127.0.0.1/tcp/4003/ws/p2p/… addr into src/config.ts, then:
-npm run dev                    # plain ws works from http://localhost
+npm test                       # regression tests (router fault tolerance)
+npm run dev                    # discovers the production seeder via the routers,
+                               # exactly like the deployed site
 ```
+
+To test against a local seeder instead, run bitsocial-seeder with this contest's
+manifest. Note the site only finds seeders through the routers, so a local seeder that
+doesn't announce is invisible to the browser — exercise it with
+`SEEDER_ADDR=/ip4/127.0.0.1/… node dist-coldtest/scripts/cold-join-test.js` instead.
 
 Casting a vote end-to-end needs no gas, but counting one needs a 5chan Pass: a wallet
 without the NFT can sign and publish, and every peer (including your own second browser
@@ -173,16 +183,12 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 - **The burner key lives in localStorage** (`bso-vote:burner-private-key`), unencrypted.
   Fine for a gasless test vote; never fund that key. Clearing site data discards the
   identity, orphaning any live vote until it expires.
-- **AutoTLS needs a plain `/ws` listen.** An explicit `/tls/ws` listen creates a
-  certificate-less https server that the certificate-provision event refuses to replace,
-  and every TLS handshake then fails with alert 40. Listen on `/ws`; the listener
-  upgrades itself in place when the cert arrives.
-- **Behind provider NAT, set `PUBLIC_IP`.** new-plebbit's interfaces only carry private
-  addresses, so AutoNAT alone never confirms the public address and AutoTLS never
-  triggers. `PUBLIC_IP=…` (see the systemd unit) announces it explicitly; the cert
-  provisioned seconds after.
-- **systemd + nvm**: `npm` isn't on systemd's PATH — the unit runs the precompiled
-  `dist-seeder/seeder/seeder.js` with the absolute node binary.
+- **One dead router must not blind discovery.** libp2p merges all delegated routers'
+  `findProviders` streams with `it-merge`, which rejects the whole merged stream when
+  any single router errors — so one Cloudflare-521 router used to kill discovery before
+  the healthy routers could answer (the 2026-07-18 outage).
+  [src/routing.ts](src/routing.ts) wraps each router client to log-and-end its stream
+  instead; `npm test` guards the behavior (and detects if upstream ever fixes it).
 - **RPC URLs are client-local, not consensus bytes**: since pubsub-voting 0.1.x the
   criteria document pins only `chains: { eth: { chainId: 1 } }`; `ETH_RPC_URLS` is each
   client's own transport config, swappable without forking the topic. They must be

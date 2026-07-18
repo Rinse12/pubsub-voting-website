@@ -10,8 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "topic": "tsx scripts/derive-topic.ts",
-    "seeder": "tsc -p tsconfig.seeder.json && node dist-seeder/seeder/seeder.js"
+    "test": "tsx tests/router-fault-tolerance.test.ts",
+    "topic": "tsx scripts/derive-topic.ts"
   },
   "dependencies": {
     "@bitsocial/bso-resolver": "0.0.10",
