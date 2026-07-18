@@ -1,4 +1,10 @@
 {
-  "extends": "./tsconfig.seeder.json",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-coldtest",
+    "rootDir": ".",
+    "sourceMap": false
+  },
   "include": ["scripts/cold-join-test.ts", "shared"]
 }

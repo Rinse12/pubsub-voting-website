@@ -27,9 +27,10 @@ import { makeNameResolvers } from "../shared/resolvers.js";
  * TIMEOUT_S bounds the wait (default 120).
  */
 
+// Default: the bitsocial-seeder votes node's TCP addr (the canonical production seeder).
 const seederAddr =
     process.env.SEEDER_ADDR ??
-    "/ip4/89.36.231.48/tcp/4002/p2p/12D3KooWHHyYsyQLVs5w35zrpiybd8zSZdNdyAkg7Whz88WD8o2N";
+    "/ip4/89.36.231.48/tcp/6742/p2p/12D3KooWMHBC5CbncuNVLn6LtNc3UcSFXYPDGBK77zNrscmtAHW7";
 const joinFirst = process.env.ORDER === "join-first";
 const waitSubs = process.env.WAIT_SUBS === "1";
 const timeoutS = Number(process.env.TIMEOUT_S ?? 120);
