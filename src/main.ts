@@ -209,26 +209,86 @@ function renderWallet(address: `0x${string}`) {
     renderMyVote();
 }
 
+/* ---------- voting-window (bucket) math ----------
+ * Mirrors the library's (unexported) bucket math: every verifier reads gate balances at
+ * the current bucket's boundary block — the head rounded down to `blocksPerBucket`. So a
+ * Pass received mid-bucket only starts counting at the NEXT boundary, up to a full
+ * bucket (~1 h here) after the airdrop. */
+const sampleBlockFor = (block: number) => Math.floor(block / criteria.blocksPerBucket) * criteria.blocksPerBucket;
+const nextWindowAfter = (sampleBlock: number) => sampleBlock + criteria.blocksPerBucket;
+/** "≈ HH:MM (in ~N min)" for the block `toBlock`, assuming `fromBlock` is (close to) head now. */
+function clockAtBlock(fromBlock: number, toBlock: number): string {
+    const ms = Math.max(0, toBlock - fromBlock) * SECONDS_PER_BLOCK * 1000;
+    const clock = new Date(Date.now() + ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const minutes = Math.round(ms / 60_000);
+    return `≈ ${clock} (${minutes < 1 ? "under a minute" : `in ~${minutes} min`})`;
+}
+
+let eligibilityRecheck: ReturnType<typeof setTimeout> | undefined;
+
 async function renderEligibility(address: `0x${string}`) {
     const gate = criteria.rule as unknown as { contract: `0x${string}`; min: number };
+    clearTimeout(eligibilityRecheck);
     try {
         const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
         if (!chain) throw new Error("no Base Sepolia chain client configured");
-        const balance = await chain.readContract({
-            address: gate.contract,
-            abi: erc721Abi,
-            functionName: "balanceOf",
-            args: [address]
-        });
+        const head = Number(await chain.getBlockNumber());
+        const sampleBlock = sampleBlockFor(head);
+        const balanceAt = (blockNumber?: number) =>
+            chain.readContract({
+                address: gate.contract,
+                abi: erc721Abi,
+                functionName: "balanceOf",
+                args: [address],
+                ...(blockNumber === undefined ? {} : { blockNumber: BigInt(blockNumber) })
+            });
+        // Two reads: "latest" is what the user's wallet UI agrees with; the window's
+        // boundary block is what every peer actually verifies against. When they disagree
+        // (Pass airdropped mid-window), warn BEFORE the user publishes a doomed vote.
+        const [balance, sampled] = await Promise.all([balanceAt(), balanceAt(sampleBlock)]);
         if (signer.connectedAddress !== address) return; // wallet changed mid-read
-        $("wallet-eligible").innerHTML =
-            balance >= BigInt(gate.min)
-                ? `<span class="badge-ok">yes — holds ${balance} 5chan Pass${balance === 1n ? "" : "es"}</span>`
-                : `<span class="badge-bad">no — holds no 5chan Pass (peers will drop this wallet's votes; ask the owner for an airdrop)</span>`;
+        const min = BigInt(gate.min);
+        if (sampled >= min) {
+            $("wallet-eligible").innerHTML =
+                `<span class="badge-ok">yes — holds ${balance} 5chan Pass${balance === 1n ? "" : "es"}</span>`;
+        } else if (balance >= min) {
+            const nextBlock = nextWindowAfter(sampleBlock);
+            $("wallet-eligible").innerHTML =
+                `<span class="badge-warn">not yet — your 5chan Pass arrived mid-window. Peers verify balances at ` +
+                `block ${sampleBlock} (before your Pass), so a vote published now will be rejected. The next voting ` +
+                `window opens at block ${nextBlock}, ${clockAtBlock(head, nextBlock)} — vote then.</span>`;
+            // Flip the badge (and clear any stale rejection alert) once the window opens.
+            eligibilityRecheck = setTimeout(
+                () => void renderEligibility(address),
+                ((nextBlock - head) * SECONDS_PER_BLOCK + 10) * 1000
+            );
+        } else {
+            $("wallet-eligible").innerHTML =
+                `<span class="badge-bad">no — holds no 5chan Pass (peers will drop this wallet's votes; ask the owner for an airdrop)</span>`;
+        }
     } catch (err) {
         if (signer.connectedAddress !== address) return;
         $("wallet-eligible").textContent = `balance check failed (${err instanceof Error ? err.message : String(err)}) — you can still vote; peers do their own read`;
     }
+}
+
+/** Translate a peer-side eviction verdict into something actionable. The one rejection an
+ * honestly-eligible voter hits is the gate sampling a balance BEFORE their Pass arrived
+ * (see the voting-window note above); every other reason passes through verbatim. */
+function explainEviction(err: VoteEvictedError): string {
+    const gated = /^not admitted: rule score is 0n at block (\d+)$/.exec(err.verdict.reason);
+    if (gated) {
+        const sampleBlock = Number(gated[1]);
+        const nextBlock = nextWindowAfter(sampleBlock);
+        // The bundle was block-stamped at publish time, moments before this eviction —
+        // close enough to head for a wall-clock estimate without another RPC read.
+        return (
+            `Your vote was rejected: your wallet held no 5chan Pass at block ${sampleBlock}, where this voting ` +
+            `window's balances are read — a Pass received after that block does not count yet. The next window ` +
+            `opens at block ${nextBlock} (${clockAtBlock(err.bundle.blockNumber, nextBlock)}); publish your vote again then.`
+        );
+    }
+    return `Your vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`;
 }
 
 /* ---------- voting ---------- */
@@ -493,7 +553,7 @@ async function main() {
         // was evicted — every honest peer drops it the same way, so it counts nowhere. Show
         // it where the user acted (the wallet card) and retract the stale "Your vote" card.
         if (err instanceof VoteEvictedError) {
-            showWalletError(`Your vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`);
+            showWalletError(explainEviction(err));
             const address = err.bundle.address;
             if (address.toLowerCase() === signer.connectedAddress?.toLowerCase()) {
                 localStorage.removeItem(myVoteKey(address));
