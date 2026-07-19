@@ -20,7 +20,7 @@ import {
     parseRootRecord,
     type DownloadedBundle
 } from "../shared/wire-log.js";
-import { startBrowserNode, keepSeederConnected } from "./node.js";
+import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
 import type { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
 
@@ -53,10 +53,42 @@ function loadMyVote(address: string): StoredVote | undefined {
 
 /* ---------- state ---------- */
 const signer = new BrowserWalletSigner();
+let pkc: Pkc;
 let voter: PubsubVoter;
 let contest: Contest;
 let publishing = false;
 let booted = false; // set once the initial contest.update() (join + snapshot restore) resolves
+
+/* ---------- benchmarks ----------
+ * Wall-clock load times, measured in this tab with performance.now(). Every row answers
+ * one question the log can't answer at a glance: how long did X take, and how far into
+ * the page load was it done. `sinceMs` defaults to page start; pass a later mark to
+ * measure a phase (e.g. community load time measured FROM the leaderboard being ready,
+ * since that's when loading could start at the earliest). */
+const t0 = performance.now();
+const benchRows: { label: string; tookMs: number; doneAtMs: number }[] = [];
+const fmtSeconds = (ms: number) => `${(ms / 1000).toFixed(2)} s`;
+function renderBench() {
+    $("bench-hint").hidden = benchRows.length > 0;
+    $("bench-table").hidden = benchRows.length === 0;
+    const body = $("bench-body");
+    body.textContent = "";
+    for (const row of benchRows) {
+        const tr = document.createElement("tr");
+        for (const text of [row.label, fmtSeconds(row.tookMs), `t+${fmtSeconds(row.doneAtMs)}`]) {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.appendChild(td);
+        }
+        body.appendChild(tr);
+    }
+}
+function markBench(label: string, sinceMs = t0) {
+    const now = performance.now();
+    benchRows.push({ label, tookMs: now - sinceMs, doneAtMs: now - t0 });
+    renderBench();
+    log(`benchmark: ${label} — ${fmtSeconds(now - sinceMs)}`);
+}
 
 /* ---------- downloaded vote bundles (debug panel) ----------
  * Every signed bundle this tab has admitted, by CID, tagged with how it arrived. Two
@@ -186,6 +218,104 @@ function renderTally() {
         tr.appendChild(actions);
         body.appendChild(tr);
     });
+}
+
+/* ---------- leaderboard-#1 community (loaded via pkc-js) ----------
+ * The boards being voted on ARE pkc communities — a board's publicKey is its community
+ * address. As soon as the leaderboard is loaded (and again whenever the leader changes),
+ * load the #1 board's community over the SAME shared helia node through pkc-js
+ * (`createCommunity` + `community.update()`) and render what arrives. The community's
+ * `update` event fires each time a (newer) community record lands; the first one is the
+ * "loaded" moment the benchmarks panel reports. */
+type PkcCommunity = Awaited<ReturnType<Pkc["getCommunity"]>>;
+let leaderCommunity: PkcCommunity | undefined;
+// Guard key = name + publicKey: a leader whose winning bundle later gains a name (same
+// key) reloads the community WITH the name, so pkc-js can verify and display it.
+let leaderKey: string | undefined;
+
+function communityStatus(text: string, cls?: "status-ok" | "status-pending") {
+    const el = $("community-status");
+    el.textContent = text;
+    el.className = cls ?? "";
+}
+
+function renderCommunity(community: PkcCommunity) {
+    $("community-info").hidden = false;
+    $("community-details").hidden = false;
+    // With a name the address IS the name; keep the canonical key visible next to it.
+    $("community-address").textContent =
+        community.publicKey && community.publicKey !== community.address
+            ? `${community.address} (${community.publicKey})`
+            : community.address;
+    $("community-title").textContent = community.title ?? "(untitled)";
+    $("community-description").textContent = community.description ?? "—";
+    $("community-created").textContent = community.createdAt ? new Date(community.createdAt * 1000).toLocaleString() : "—";
+    $("community-updated").textContent = community.updatedAt ? new Date(community.updatedAt * 1000).toLocaleString() : "—";
+    $("community-last-post").textContent = community.lastPostCid ?? "none";
+    $("community-json").textContent = JSON.stringify(community.raw.communityIpfs ?? {}, null, 2);
+}
+
+async function syncLeaderCommunity() {
+    const top = contest.tally?.ranking[0];
+    const publicKey = top?.community.publicKey;
+    if (!publicKey) {
+        communityStatus("waiting for the first board on the leaderboard…");
+        return;
+    }
+    // Hand pkc-js BOTH identity halves the winning bundle carries: the canonical
+    // publicKey (loads without resolution) and the claimed .bso name when there is one
+    // (pkc-js resolves and verifies it — `nameResolved` — and uses it as the address).
+    const name = top.community.name;
+    const key = `${name ?? ""}|${publicKey}`;
+    if (key === leaderKey) return; // already loading/showing this leader
+    leaderKey = key;
+    const label = name ?? shortKey(publicKey);
+
+    // A dethroned leader's community stops syncing — one community updating at a time.
+    const previous = leaderCommunity;
+    leaderCommunity = undefined;
+    $("community-info").hidden = true;
+    $("community-details").hidden = true;
+    if (previous) void previous.stop().catch((err: Error) => log(`stopping previous community failed: ${err.message}`));
+
+    const startedAt = performance.now();
+    communityStatus(`loading community ${label} (leaderboard #1) via pkc-js…`, "status-pending");
+    log(`leaderboard #1 is ${label} — loading its community via pkc-js createCommunity + update()`);
+    try {
+        const community = (await pkc.createCommunity(name ? { name, publicKey } : { publicKey })) as PkcCommunity;
+        if (leaderKey !== key) return; // leader changed while constructing
+        leaderCommunity = community;
+        let loaded = false;
+        community.on("update", () => {
+            if (leaderKey !== key) return;
+            if (!loaded) {
+                loaded = true;
+                markBench(`community ${label} loaded via pkc-js (from leaderboard ready)`, startedAt);
+            }
+            communityStatus(`community ${label} loaded — live-updating`, "status-ok");
+            log(`community update: ${community.address} (title ${JSON.stringify(community.title ?? null)}, record updatedAt ${community.updatedAt})`);
+            renderCommunity(community);
+        });
+        community.on("updatingstatechange", (state) => {
+            if (leaderKey !== key) return;
+            log(`community ${label} updating state: ${state}`);
+            if (!loaded && state !== "succeeded")
+                communityStatus(
+                    `loading community ${label} via pkc-js… (${state}${state === "failed" ? " — a board that isn't a real community never resolves; retrying anyway" : ""})`,
+                    "status-pending"
+                );
+        });
+        community.on("error", (err: Error) => {
+            if (leaderKey !== key) return;
+            log(`community ${label} error: ${err.message}`);
+        });
+        await community.update(); // starts the update loop; the `update` event does the rendering
+    } catch (err) {
+        if (leaderKey === key) {
+            communityStatus(`loading community ${label} failed: ${(err as Error).message}`);
+            log(`community ${label} load failed: ${(err as Error).message}`);
+        }
+    }
 }
 
 /** Burner button labels track whether a key is stored; the forget button only shows then. */
@@ -356,8 +486,10 @@ async function castVote(votes: Vote[]) {
 
 /* ---------- boot ---------- */
 async function main() {
-    log("starting in-browser libp2p/Helia node…");
-    const helia = await startBrowserNode();
+    log("starting pkc-js with its in-browser libp2p/Helia node (shared by community loading AND vote sync)…");
+    const { pkc: pkcInstance, helia } = await startPkcNode();
+    pkc = pkcInstance;
+    markBench("pkc-js ready (in-browser helia/libp2p node booted)");
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
         const connections = helia.libp2p.getConnections();
@@ -534,6 +666,7 @@ async function main() {
         nameResolvers: makeNameResolvers()
     });
 
+    let sawBoards = false;
     contest = await voter.createContest({ criteria });
     contest.on("update", () => {
         // Same line the seeder logs, so the two sides are directly comparable.
@@ -543,7 +676,14 @@ async function main() {
             `tally update: ${ranking.length} board(s)` +
                 (top ? `, leader ${top.community.name ?? shortKey(top.community.publicKey)} with ${top.weight} vote(s)` : "")
         );
+        if (!sawBoards && ranking.length > 0) {
+            sawBoards = true;
+            markBench(`first votes on the leaderboard (${ranking.length} board(s))`);
+        }
         renderTally();
+        // The moment the leaderboard has content, the #1 board's community loads — and
+        // if a later vote flips the leader, the shown community follows it.
+        void syncLeaderCommunity();
         // The chase that fired this update stored any checkpoint blocks it pulled.
         void refreshCheckpointBundles(helia.blockstore);
     });
@@ -565,7 +705,12 @@ async function main() {
     });
     await contest.update();
     booted = true;
+    markBench("leaderboard loaded (topic joined + persisted votes restored)");
     log("joined the contest topic; syncing votes…");
+    // "Community loads immediately after the leaderboard": if the restored snapshot
+    // already ranks a leader, this starts its community load right now — otherwise the
+    // tally-update handler above fires it the moment the first votes arrive.
+    void syncLeaderCommunity();
 
     /* wire the voting UI (needs the voter, so only after boot) */
     $<HTMLFormElement>("new-board-form").onsubmit = (e) => {

@@ -5,12 +5,16 @@
  * routers down (Cloudflare 521), discovery died before the healthy routers could answer
  * and the site sat on "not connected to seeder, retrying…" forever.
  *
- * The test runs two local fake routers — one answering 521 to everything, one serving a
- * valid provider record — and asserts:
+ * The site no longer wires its own router wrapper: since the move to pkc-js's shared
+ * helia node, seeder discovery rides the node pkc-js builds, whose per-router wrapper
+ * (pkc-js issue #171) ends an erroring router's stream instead of throwing. This test
+ * pins that behavior with two local fake routers — one answering 521 to everything, one
+ * serving a valid provider record — and asserts:
  *   1. (control) the raw delegated-routing client still has the failure mode, i.e. the
- *      merged findProviders stream throws. If this ever fails, upstream fixed it and
- *      faultTolerantDelegatedRouting can be deleted.
- *   2. faultTolerantDelegatedRouting yields the healthy router's provider anyway.
+ *      merged findProviders stream throws. If this ever fails, upstream libp2p fixed it
+ *      and the pkc-js wrapper (and this test) can be retired.
+ *   2. a node built by pkc-js — exactly how src/node.ts builds the production node —
+ *      yields the healthy router's provider anyway.
  *
  *   npm test
  */
@@ -22,7 +26,7 @@ import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { delegatedRoutingV1HttpApiClient } from "@helia/delegated-routing-v1-http-api-client";
 import { CID } from "multiformats/cid";
-import { faultTolerantDelegatedRouting } from "../src/routing.js";
+import PKC from "@pkcprotocol/pkc-js";
 
 const SEEDER_PEER_ID = "12D3KooWMHBC5CbncuNVLn6LtNc3UcSFXYPDGBK77zNrscmtAHW7";
 const ANY_CID = CID.parse("bafyreicyjfqthbsnspmqffnbbv4jvxymimso3z4pgizysrs5qulu6jz5nq");
@@ -61,18 +65,6 @@ const healthyServer = createServer((req, res) => {
 });
 const [deadUrl, healthyUrl] = await Promise.all([listen(deadServer), listen(healthyServer)]);
 
-/** A node wired like src/node.ts startBrowserNode, minus the services discovery doesn't need. */
-const makeNode = (routerFactory: (url: string) => (components: unknown) => unknown): Promise<Libp2p> =>
-    createLibp2p({
-        transports: [webSockets()],
-        connectionEncrypters: [noise()],
-        streamMuxers: [yamux()],
-        services: Object.fromEntries(
-            // Dead router first so its error races ahead, like the production outage.
-            [deadUrl, healthyUrl].map((url, i) => [`delegatedRouting${i}`, routerFactory(url) as never])
-        )
-    });
-
 const collectProviders = async (node: Libp2p) => {
     const found: string[] = [];
     for await (const provider of node.contentRouting.findProviders(ANY_CID, { signal: AbortSignal.timeout(10_000) }))
@@ -81,22 +73,39 @@ const collectProviders = async (node: Libp2p) => {
 };
 
 // 1. Control: the raw client + compound routing still fail as a whole on one dead router.
-const rawNode = await makeNode((url) => delegatedRoutingV1HttpApiClient({ url }) as never);
+const rawNode = await createLibp2p({
+    transports: [webSockets()],
+    connectionEncrypters: [noise()],
+    streamMuxers: [yamux()],
+    services: Object.fromEntries(
+        // Dead router first so its error races ahead, like the production outage.
+        [deadUrl, healthyUrl].map((url, i) => [`delegatedRouting${i}`, delegatedRoutingV1HttpApiClient({ url }) as never])
+    )
+});
 await assert.rejects(
     () => collectProviders(rawNode),
     (err: Error) => err.name !== "TimeoutError" && err.name !== "AbortError",
     "expected the unwrapped merged stream to throw on the 521 router — if it no longer does, " +
-        "upstream fixed the it-merge failure mode and faultTolerantDelegatedRouting can be removed"
+        "upstream libp2p fixed the it-merge failure mode and the pkc-js per-router wrapper is redundant"
 );
 await rawNode.stop();
 console.log("control: unwrapped client still poisons the merged stream (bug reproduced)");
 
-// 2. The fix: the wrapped client must surface the healthy router's provider regardless.
-const tolerantNode = await makeNode(faultTolerantDelegatedRouting);
-const providers = await collectProviders(tolerantNode);
-assert.deepEqual(providers, [SEEDER_PEER_ID], "healthy router's provider must survive a dead sibling router");
-await tolerantNode.stop();
-console.log("fix: fault-tolerant client yielded the healthy router's provider");
+// 2. The production path: a pkc-js-built node (the same construction src/node.ts uses)
+//    must surface the healthy router's provider despite the dead sibling router.
+const pkc = await PKC({
+    httpRoutersOptions: [deadUrl, healthyUrl], // dead router first, as above
+    libp2pJsClientsOptions: [{ key: "router-fault-tolerance-test" }],
+    noData: true
+});
+try {
+    const helia = pkc.clients.libp2pJsClients["router-fault-tolerance-test"].heliaNode;
+    const providers = await collectProviders(helia.libp2p);
+    assert.deepEqual(providers, [SEEDER_PEER_ID], "healthy router's provider must survive a dead sibling router");
+    console.log("fix: the pkc-js-built node yielded the healthy router's provider");
+} finally {
+    await pkc.destroy();
+}
 
 deadServer.close();
 healthyServer.close();

@@ -18,6 +18,16 @@ votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic deri
 from the contest rules, validated by every peer (signature + bucketed-block freshness)
 **before** re-forwarding, and merged with a last-write-wins CRDT.
 
+The page runs **one** in-browser Helia/libp2p node, built and owned by
+[`@pkcprotocol/pkc-js`](https://github.com/pkcprotocol/pkc-js) and shared by both
+consumers: pkc-js itself loads the **leaderboard #1 board's community** (a board's
+public key *is* its community address) via `createCommunity` + `community.update()`,
+and `PubsubVoter` syncs the votes on the same node through the public
+`pkc.clients.libp2pJsClients[key].heliaNode` accessor (semver-covered since pkc-js
+0.0.72 — the host pattern pubsub-voting 0.1.4 is built against). A **Benchmarks**
+panel on the page reports how long the node boot, the leaderboard (votes), and the
+community load each took.
+
 Contest topic: `bitsocial-votes/bafyreicyjfqthbsnspmqffnbbv4jvxymimso3z4pgizysrs5qulu6jz5nq`
 
 ## Architecture
@@ -26,18 +36,21 @@ Contest topic: `bitsocial-votes/bafyreicyjfqthbsnspmqffnbbv4jvxymimso3z4pgizysrs
 Netlify (static HTML/JS)                     new-plebbit (89.36.231.48)
 ┌──────────────────────────┐                ┌────────────────────────────────┐
 │ browser voter            │   WSS          │ seeder: Node.js Helia node     │
-│  - in-page Helia/libp2p ─┼───────────────▶│  - AutoTLS cert (libp2p.direct)│
-│  - MetaMask signs ballot │  (AutoTLS)     │  - joins the contest topic     │
-│  - renders live tally    │                │  - validates + forwards votes  │
-└──────────────────────────┘                │  - serves checkpoint to        │
-        ▲    ▲                              │    cold-joining browsers       │
-        │    └── other browsers, meshed     └────────────────────────────────┘
-        │        through the seeder
+│  - ONE pkc-js Helia node─┼───────────────▶│  - AutoTLS cert (libp2p.direct)│
+│    shared by votes AND   │  (AutoTLS)     │  - joins the contest topic     │
+│    community loading     │                │  - validates + forwards votes  │
+│  - MetaMask signs ballot │                │  - serves checkpoint to        │
+│  - renders live tally +  │                │    cold-joining browsers       │
+│    #1 board's community  │                └────────────────────────────────┘
+└──────────────────────────┘
+        ▲    ▲
+        │    └── other browsers, meshed through the seeder
         └── Base Sepolia RPC (bucket-block reads + 5chan Pass balanceOf gate reads)
 ```
 
 Browsers can't accept inbound connections, so they all dial the seeder's WSS address
-(pinned in [src/config.ts](src/config.ts)) and the gossipsub mesh forms through it. The
+(discovered via the delegated-routing HTTP routers listed in
+[src/config.ts](src/config.ts)) and the gossipsub mesh forms through it. The
 seeder never votes (read-only, no signer) and can't forge or drop votes without honest
 peers noticing — validation is done by every participant.
 
@@ -64,7 +77,8 @@ peers noticing — validation is done by every participant.
 ```
 shared/    criteria document (defines the contest AND the topic), viem chain
            factory, .bso name resolvers, wire-log decoders
-src/       the website: in-browser Helia/libp2p node, injected+burner wallet signer, UI
+src/       the website: pkc-js boot (the one shared Helia node), injected+burner
+           wallet signer, leader-community loader, benchmarks panel, UI
 scripts/   derive-topic.ts — validate criteria + print the topic (npm run topic)
 tests/     regression tests (npm test)
 ```
@@ -183,12 +197,30 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 - **The burner key lives in localStorage** (`bso-vote:burner-private-key`), unencrypted.
   Fine for a gasless test vote; never fund that key. Clearing site data discards the
   identity, orphaning any live vote until it expires.
+- **One Helia node, owned by pkc-js.** The site never builds its own libp2p node:
+  [src/node.ts](src/node.ts) boots pkc-js with `libp2pJsClientsOptions` and everything —
+  vote sync, seeder discovery, community loading — rides
+  `pkc.clients.libp2pJsClients[key].heliaNode`. pkc-js registers gossipsub +
+  `@libp2p/fetch` (the exact seams PubsubVoter's construction guards check) since
+  0.0.63; never start a second Helia next to it.
 - **One dead router must not blind discovery.** libp2p merges all delegated routers'
   `findProviders` streams with `it-merge`, which rejects the whole merged stream when
   any single router errors — so one Cloudflare-521 router used to kill discovery before
-  the healthy routers could answer (the 2026-07-18 outage).
-  [src/routing.ts](src/routing.ts) wraps each router client to log-and-end its stream
-  instead; `npm test` guards the behavior (and detects if upstream ever fixes it).
+  the healthy routers could answer (the 2026-07-18 outage). The per-router wrapper that
+  ends an erroring router's stream instead now lives **inside pkc-js** (its issue #171 —
+  this repo's own src/routing.ts wrapper was retired with the shared-node move);
+  `npm test` reproduces the outage against a pkc-js-built node and detects if upstream
+  libp2p ever fixes the failure mode.
+- **The #1 board's community loads the moment the leaderboard does.** Boards are pkc
+  communities (the public key is the community address), so the page calls
+  `pkc.createCommunity({ name, publicKey })` + `community.update()` for the current
+  leader — both identity halves the winning bundle carries: the canonical key loads
+  without resolution, and the claimed `.bso` name (when present) is resolved+verified
+  by pkc-js and used as the display address — and re-targets whenever the lead changes. A board that isn't a real community keeps
+  cycling `fetching-ipns → waiting-retry` ("Resolved IPNS name to undefined") — shown
+  as-is, since a made-up board key provably has no community record. The Benchmarks
+  panel times the node boot, the leaderboard (join + restore, and first votes), and the
+  community load (from leaderboard-ready).
 - **RPC URLs are client-local, not consensus bytes**: since pubsub-voting 0.1.x the
   criteria document pins only `chains: { eth: { chainId: 1 } }`; `ETH_RPC_URLS` is each
   client's own transport config, swappable without forking the topic. They must be
