@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-coldtest/
 .bitsocial-pubsub-voting/
+.pkc/
 *.log
 tes
 

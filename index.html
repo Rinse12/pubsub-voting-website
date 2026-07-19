@@ -93,6 +93,36 @@
                 </details>
             </section>
 
+            <section class="card" id="community-card">
+                <h2>Leading board's community</h2>
+                <p class="hint">
+                    The boards on the leaderboard are pkc communities — a board's public key is its community
+                    address. As soon as the leaderboard loads, this page loads the <strong>#1 board's
+                    community</strong> through pkc-js (<code>createCommunity</code> +
+                    <code>community.update()</code>) over the <em>same</em> in-browser helia node the votes
+                    sync on, and follows the leader if a later vote changes it.
+                </p>
+                <p id="community-status">waiting for the leaderboard…</p>
+                <dl class="kv" id="community-info" hidden>
+                    <dt>Address</dt>
+                    <dd><code id="community-address" class="wrap"></code></dd>
+                    <dt>Title</dt>
+                    <dd id="community-title">—</dd>
+                    <dt>Description</dt>
+                    <dd id="community-description">—</dd>
+                    <dt>Created</dt>
+                    <dd id="community-created">—</dd>
+                    <dt>Record updated</dt>
+                    <dd id="community-updated">—</dd>
+                    <dt>Latest post CID</dt>
+                    <dd><code id="community-last-post" class="wrap">—</code></dd>
+                </dl>
+                <details id="community-details" hidden>
+                    <summary>Raw community record</summary>
+                    <pre id="community-json">—</pre>
+                </details>
+            </section>
+
             <section class="card" id="new-board-card">
                 <h2>Vote for a new board</h2>
                 <form id="new-board-form">
@@ -126,6 +156,23 @@
                 </dl>
                 <p class="hint">Votes decay: re-vote before expiry (just vote again) to keep it counted.</p>
                 <button id="withdraw-btn" class="danger">Withdraw vote</button>
+            </section>
+
+            <section class="card" id="bench-card">
+                <h2>Benchmarks</h2>
+                <p class="hint">
+                    Wall-clock load times measured in this tab. "Took" is the duration of that step from when
+                    it could start; "done at" is how far into the page load it finished. The community row
+                    measures pkc-js loading the #1 board's community, timed from the moment the leaderboard
+                    was ready (the earliest it could begin).
+                </p>
+                <table id="bench-table" hidden>
+                    <thead>
+                        <tr><th>What</th><th>Took</th><th>Done at</th></tr>
+                    </thead>
+                    <tbody id="bench-body"></tbody>
+                </table>
+                <p class="hint" id="bench-hint">nothing measured yet</p>
             </section>
 
             <section class="card">

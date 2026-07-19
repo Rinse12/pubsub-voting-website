@@ -10,12 +10,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/router-fault-tolerance.test.ts",
+    "test": "node tests/router-fault-tolerance.test.ts",
     "topic": "tsx scripts/derive-topic.ts"
   },
   "dependencies": {
     "@bitsocial/bso-resolver": "0.0.10",
-    "@bitsocial/pubsub-voting": "^0.1.1",
+    "@bitsocial/pubsub-voting": "^0.1.4",
     "@chainsafe/libp2p-noise": "17.0.0",
     "@chainsafe/libp2p-yamux": "8.0.1",
     "@helia/delegated-routing-v1-http-api-client": "^6.0.1",
@@ -32,6 +32,7 @@
     "@libp2p/tcp": "11.0.22",
     "@libp2p/websockets": "10.1.16",
     "@multiformats/multiaddr": "13.0.3",
+    "@pkcprotocol/pkc-js": "^0.0.72",
     "datastore-fs": "12.0.1",
     "helia": "6.1.4",
     "libp2p": "3.3.5",

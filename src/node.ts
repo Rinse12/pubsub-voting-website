@@ -1,46 +1,52 @@
-import { createLibp2p } from "libp2p";
-import { webSockets } from "@libp2p/websockets";
-import { noise } from "@chainsafe/libp2p-noise";
-import { yamux } from "@chainsafe/libp2p-yamux";
-import { identify } from "@libp2p/identify";
+import PKC, { type HeliaWithLibp2pPubsub } from "@pkcprotocol/pkc-js";
 import { gossipsub } from "@libp2p/gossipsub";
-import { fetch as fetchService } from "@libp2p/fetch";
-import { faultTolerantDelegatedRouting } from "./routing.js";
-import { createHelia, type Helia } from "helia";
 import { criteriaCid } from "@bitsocial/pubsub-voting";
 import { criteria } from "../shared/criteria.js";
+import { makeNameResolvers } from "../shared/resolvers.js";
 import { DISCOVERY_TIMEOUT_MS, HTTP_ROUTER_URLS, REDIAL_INTERVAL_MS } from "./config.js";
 
+export type Pkc = Awaited<ReturnType<typeof PKC>>;
+
+/** The one libp2p-js client key; `pkc.clients.libp2pJsClients[KEY].heliaNode` is THE node. */
+export const LIBP2P_CLIENT_KEY = "bso-board-vote";
+
 /**
- * The in-browser Helia node PubsubVoter drives. Browsers cannot accept inbound dials,
- * so the node only dials out — to seeders discovered through the delegated routing
- * HTTP routers — and the gossipsub mesh forms through them. The service keys
- * (pubsub, fetch) are the exact seams PubsubVoter's construction guards check for,
- * and the delegatedRouting* services compose into `libp2p.contentRouting`, which is
- * ALSO what the voter's own cold-join provider discovery rides.
+ * The page's single networking stack: one pkc-js instance whose in-browser Helia/libp2p
+ * node is shared by BOTH consumers — pkc-js itself (community loading) and PubsubVoter
+ * (vote sync), reached through the public `Libp2pJsClient.heliaNode` accessor
+ * (semver-covered since pkc-js 0.0.72; what pubsub-voting 0.1.4 is built against).
+ * Never start a second Helia next to it.
+ *
+ * pkc-js registers everything PubsubVoter's construction guards demand — gossipsub at
+ * `libp2p.services.pubsub`, `@libp2p/fetch` at `libp2p.services.fetch`, a blockstore —
+ * and wraps each delegated-routing HTTP router so one dead router ends ITS stream
+ * instead of poisoning the merged `findProviders` (pkc-js issue #171; the same outage
+ * this repo previously carried its own src/routing.ts wrapper for).
  */
-export async function startBrowserNode(): Promise<Helia> {
-    const routers = Object.fromEntries(
-        HTTP_ROUTER_URLS.map((url, i) => [`delegatedRouting${i}`, faultTolerantDelegatedRouting(url)])
-    );
-    const libp2p = await createLibp2p({
-        transports: [webSockets()],
-        connectionEncrypters: [noise()],
-        streamMuxers: [yamux()],
-        // Allow ws:// to 127.0.0.1 for local-dev seeders; production dials are wss anyway.
-        connectionGater: { denyDialMultiaddr: () => false },
-        services: {
-            ...routers,
-            identify: identify(),
-            fetch: fetchService(),
-            pubsub: gossipsub({
-                // Test deployments often have several voters behind one IP (or one dev
-                // machine); don't let the colocation penalty graylist them.
-                scoreParams: { IPColocationFactorWeight: 0 }
-            })
-        }
+export async function startPkcNode(): Promise<{ pkc: Pkc; helia: HeliaWithLibp2pPubsub }> {
+    const pkc = await PKC({
+        // Same six routers as the default list — pinned here because every votes seeder
+        // announces to exactly these (see config.ts), and a pkc-js default change should
+        // be a conscious re-sync, not a silent fork.
+        httpRoutersOptions: HTTP_ROUTER_URLS,
+        // The same .bso resolver instances the voter uses, so community/author names
+        // resolve through the same chain endpoints (the pattern pubsub-voting documents).
+        nameResolvers: makeNameResolvers(),
+        libp2pJsClientsOptions: [
+            {
+                key: LIBP2P_CLIENT_KEY,
+                libp2pOptions: {
+                    services: {
+                        // Test deployments often have several voters behind one IP (or one
+                        // dev machine); don't let the colocation penalty graylist them.
+                        pubsub: gossipsub({ scoreParams: { IPColocationFactorWeight: 0 } })
+                    }
+                }
+            }
+        ]
     });
-    return createHelia({ libp2p });
+    const helia = pkc.clients.libp2pJsClients[LIBP2P_CLIENT_KEY].heliaNode;
+    return { pkc, helia };
 }
 
 /**
@@ -50,7 +56,10 @@ export async function startBrowserNode(): Promise<Helia> {
  * count to known seeders drops to zero. Reports state changes so the UI can show a
  * connectivity dot.
  */
-export function keepSeederConnected(helia: Helia, onChange: (connected: boolean, error?: Error) => void): () => void {
+export function keepSeederConnected(
+    helia: HeliaWithLibp2pPubsub,
+    onChange: (connected: boolean, error?: Error) => void
+): () => void {
     // Every peer the routers have EVER returned for this contest: a connection to any
     // of them counts as "connected", even after the router entry's TTL lapses.
     const seederPeerIds = new Set<string>();
