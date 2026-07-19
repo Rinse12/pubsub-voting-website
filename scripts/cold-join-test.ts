@@ -9,7 +9,7 @@ import { fetch as fetchService } from "@libp2p/fetch";
 import { createHelia } from "helia";
 import { multiaddr } from "@multiformats/multiaddr";
 import { PubsubVoter, topicFor } from "@bitsocial/pubsub-voting";
-import { criteria } from "../shared/criteria.js";
+import { allCriteria, directoryCodeOf } from "../shared/contests.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 
@@ -24,7 +24,8 @@ import { makeNameResolvers } from "../shared/resolvers.js";
  *                                                    # topic subscriber before joining (the proposed fix)
  *
  * SEEDER_ADDR overrides the dial target (default: the production seeder's TCP addr).
- * TIMEOUT_S bounds the wait (default 120).
+ * TIMEOUT_S bounds the wait (default 120). DIR picks which directory contest to join
+ * (default "g") — the cold-join is per-contest, so one directory is representative.
  */
 
 // Default: the bitsocial-seeder votes node's TCP addr (the canonical production seeder).
@@ -34,6 +35,9 @@ const seederAddr =
 const joinFirst = process.env.ORDER === "join-first";
 const waitSubs = process.env.WAIT_SUBS === "1";
 const timeoutS = Number(process.env.TIMEOUT_S ?? 120);
+const dirCode = process.env.DIR ?? "g";
+const criteria = allCriteria.find((c) => directoryCodeOf(c) === dirCode);
+if (!criteria) throw new Error(`no directory contest with code "${dirCode}"`);
 
 const t0 = Date.now();
 const log = (msg: string) => console.log(`[t+${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
@@ -56,7 +60,7 @@ const voter = new PubsubVoter({
     nameResolvers: makeNameResolvers()
 });
 const topic = await topicFor(criteria);
-log(`fresh peer ${libp2p.peerId}, topic ${topic}, order=${joinFirst ? "join-first (website order)" : "connect-first"}`);
+log(`fresh peer ${libp2p.peerId}, /${dirCode}/ topic ${topic}, order=${joinFirst ? "join-first (website order)" : "connect-first"}`);
 
 const dial = async () => {
     await libp2p.dial(multiaddr(seederAddr));

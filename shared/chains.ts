@@ -1,7 +1,7 @@
 import { createPublicClient, fallback, http } from "viem";
 import { baseSepolia, mainnet } from "viem/chains";
 import type { ChainClient, ChainClientFactory } from "@bitsocial/pubsub-voting";
-import { BASE_SEPOLIA_RPC_URLS, ETH_RPC_URLS } from "./criteria.js";
+import { BASE_SEPOLIA_RPC_URLS, ETH_RPC_URLS } from "./contests.js";
 
 /**
  * ChainClientFactory for PubsubVoter. Since pubsub-voting 0.1.x the criteria names chains
