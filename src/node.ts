@@ -1,7 +1,7 @@
 import PKC, { type HeliaWithLibp2pPubsub } from "@pkcprotocol/pkc-js";
 import { gossipsub } from "@libp2p/gossipsub";
 import { criteriaCid } from "@bitsocial/pubsub-voting";
-import { criteria } from "../shared/criteria.js";
+import { allCriteria } from "../shared/contests.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 import { DISCOVERY_TIMEOUT_MS, HTTP_ROUTER_URLS, REDIAL_INTERVAL_MS } from "./config.js";
 
@@ -51,10 +51,15 @@ export async function startPkcNode(): Promise<{ pkc: Pkc; helia: HeliaWithLibp2p
 
 /**
  * Keep at least one seeder connection alive, 5chan-style: ask the routers who provides
- * this contest's criteria CID, dial every provider's addrs (the transport skips the
+ * a contest's criteria CID, dial every provider's addrs (the transport skips the
  * browser-undialable plain-TCP ones), and re-run discovery whenever the connection
  * count to known seeders drops to zero. Reports state changes so the UI can show a
  * connectivity dot.
+ *
+ * With 63 directory contests there are 63 criteria CIDs; the production seeder announces
+ * ALL of them, so providers of any one CID cover every contest. Each discovery round
+ * queries ONE CID, rotating through the set, so a seeder that only announces a subset
+ * of the directories is still found within a few rounds.
  */
 export function keepSeederConnected(
     helia: HeliaWithLibp2pPubsub,
@@ -69,6 +74,7 @@ export function keepSeederConnected(
 
     let stopped = false;
     let discovering = false;
+    let cidIndex = 0;
     const tick = async () => {
         if (stopped || discovering) return;
         if (isConnected()) {
@@ -78,7 +84,8 @@ export function keepSeederConnected(
         onChange(false);
         discovering = true;
         try {
-            const cid = await criteriaCid(criteria);
+            const cid = await criteriaCid(allCriteria[cidIndex % allCriteria.length]);
+            cidIndex++;
             const signal = AbortSignal.timeout(DISCOVERY_TIMEOUT_MS);
             let lastError: Error | undefined;
             let found = 0;

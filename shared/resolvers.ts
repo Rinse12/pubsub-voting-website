@@ -1,5 +1,5 @@
 import { BsoResolver } from "@bitsocial/bso-resolver";
-import { ETH_RPC_URLS } from "./criteria.js";
+import { ETH_RPC_URLS } from "./contests.js";
 
 /**
  * .bso name resolvers, injected into PubsubVoter as `nameResolvers`.

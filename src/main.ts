@@ -5,10 +5,12 @@ import {
     InvalidCommunityNameError,
     VoteEvictedError,
     type Contest,
+    type Criteria,
     type Vote
 } from "@bitsocial/pubsub-voting";
 import { erc721Abi } from "viem";
-import { criteria, SECONDS_PER_BLOCK } from "../shared/criteria.js";
+import { allCriteria, sharedRules, directoryCodeOf, SECONDS_PER_BLOCK } from "../shared/contests.js";
+import { directoryManifest } from "../shared/directory-manifest.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 import {
@@ -21,6 +23,7 @@ import {
     type DownloadedBundle
 } from "../shared/wire-log.js";
 import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
+import { fetchCandidates, fetchDirectoryMeta, type Candidate, type DirectoryMeta } from "./lists.js";
 import type { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
 
@@ -34,17 +37,40 @@ function log(message: string) {
 }
 const shortKey = (key: string) => (key.length > 20 ? `${key.slice(0, 10)}…${key.slice(-6)}` : key);
 
-/* ---------- my-vote persistence (per contest + wallet) ---------- */
+/* ---------- the 63 directory contests ---------- */
+interface DirEntry {
+    code: string; // e.g. "g"
+    title: string; // e.g. "/g/ - Technology"
+    criteria: Criteria;
+    topic: string; // derived before contests are created
+    contest?: Contest;
+    joined: boolean; // update() resolved (topic joined + snapshot restored)
+    joinError?: string;
+}
+const entries: DirEntry[] = allCriteria.map((criteria) => ({
+    code: directoryCodeOf(criteria),
+    // The criteria name is "<title> directory (test)"; the title alone reads better in tables.
+    title: criteria.name.replace(/ directory \(test\)$/, ""),
+    criteria,
+    topic: "",
+    joined: false
+}));
+const byCode = new Map(entries.map((e) => [e.code, e]));
+const byTopic = new Map<string, DirEntry>(); // filled once topics are derived
+
+let selected: DirEntry | undefined;
+let directoryMeta: Record<string, DirectoryMeta> = {};
+
+/* ---------- my-vote persistence (per contest topic + wallet) ---------- */
 interface StoredVote {
     publicKey: string;
     name?: string;
     at: number; // epoch ms when published
 }
-let storageKey = "bso-vote"; // finalized once the topic is known
-const myVoteKey = (address: string) => `${storageKey}:${address.toLowerCase()}`;
-function loadMyVote(address: string): StoredVote | undefined {
+const myVoteKey = (entry: DirEntry, address: string) => `bso-vote:${entry.topic}:${address.toLowerCase()}`;
+function loadMyVote(entry: DirEntry, address: string): StoredVote | undefined {
     try {
-        const raw = localStorage.getItem(myVoteKey(address));
+        const raw = localStorage.getItem(myVoteKey(entry, address));
         return raw ? (JSON.parse(raw) as StoredVote) : undefined;
     } catch {
         return undefined;
@@ -55,15 +81,14 @@ function loadMyVote(address: string): StoredVote | undefined {
 const signer = new BrowserWalletSigner();
 let pkc: Pkc;
 let voter: PubsubVoter;
-let contest: Contest;
 let publishing = false;
-let booted = false; // set once the initial contest.update() (join + snapshot restore) resolves
+let booted = false; // set once EVERY contest's initial update() (join + snapshot restore) resolved
 
 /* ---------- benchmarks ----------
  * Wall-clock load times, measured in this tab with performance.now(). Every row answers
  * one question the log can't answer at a glance: how long did X take, and how far into
  * the page load was it done. `sinceMs` defaults to page start; pass a later mark to
- * measure a phase (e.g. community load time measured FROM the leaderboard being ready,
+ * measure a phase (e.g. community load time measured FROM its leaderboard being ready,
  * since that's when loading could start at the earliest). */
 const t0 = performance.now();
 const benchRows: { label: string; tookMs: number; doneAtMs: number }[] = [];
@@ -91,17 +116,18 @@ function markBench(label: string, sinceMs = t0) {
 }
 
 /* ---------- downloaded vote bundles (debug panel) ----------
- * Every signed bundle this tab has admitted, by CID, tagged with how it arrived. Two
- * exact wire taps (live-delta gossip messages; checkpoint chunks read back via the chunk
- * CIDs the last fetched root record advertised — retried on the next tally update if the
- * chase hasn't stored them yet) plus a catch-all tap on helia.blockstore.put, which every
- * CRDT admission path writes the standalone bundle block through. The put tap's source is
- * inferred from context (local vote / snapshot restore / chase), so an exact tag may
- * upgrade an inferred one when both see the same bundle. */
+ * Every signed bundle this tab has admitted, by CID, across ALL contests, tagged with how
+ * it arrived. Two exact wire taps (live-delta gossip messages; checkpoint chunks read
+ * back via the chunk CIDs the fetched root records advertised — retried on the next tally
+ * update if the chase hasn't stored them yet) plus a catch-all tap on
+ * helia.blockstore.put, which every CRDT admission path writes the standalone bundle
+ * block through. The put tap's source is inferred from context (local vote / snapshot
+ * restore / chase), so an exact tag may upgrade an inferred one when both see the same
+ * bundle. */
 type BundleSource = "live gossip" | "checkpoint chunk" | "local vote" | "snapshot restore" | "chase";
 const INFERRED_SOURCES = new Set<BundleSource>(["snapshot restore", "chase"]);
 const downloadedBundles = new Map<string, { bundle: unknown; source: BundleSource }>();
-let checkpointChunks: CID[] = [];
+const checkpointChunks = new Map<string, CID>(); // chunk CID string → CID, across all contests
 
 function renderBundles() {
     const bySource = new Map<BundleSource, number>();
@@ -146,7 +172,7 @@ function describeBundleContent(bundle: unknown): string {
 }
 
 async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { signal?: AbortSignal }): unknown }) {
-    for (const chunk of checkpointChunks) {
+    for (const chunk of checkpointChunks.values()) {
         try {
             const bytes = (await blockstore.get(chunk, { signal: AbortSignal.timeout(10_000) })) as Uint8Array;
             for (const item of await decodeChunkBundles(bytes)) addBundle(item, "checkpoint chunk");
@@ -156,27 +182,114 @@ async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { sig
     }
 }
 
-/* ---------- rendering ---------- */
-function renderMyVote() {
-    const card = $("my-vote-card");
+/* ---------- directories overview ---------- */
+let dirsTimer: ReturnType<typeof setTimeout> | undefined;
+/** Rebuilding a 63-row table on every one of 63 contests' update events would thrash; coalesce. */
+function scheduleRenderDirs() {
+    if (dirsTimer) return;
+    dirsTimer = setTimeout(() => {
+        dirsTimer = undefined;
+        renderDirs();
+    }, 100);
+}
+
+function renderDirs() {
     const address = signer.connectedAddress;
-    const stored = address ? loadMyVote(address) : undefined;
+    const body = $("dirs-body");
+    body.textContent = "";
+    for (const entry of entries) {
+        const tr = document.createElement("tr");
+        tr.className = `dir-row${entry === selected ? " selected" : ""}`;
+        tr.onclick = () => select(entry.code);
+
+        const dir = document.createElement("td");
+        const code = document.createElement("code");
+        code.textContent = `/${entry.code}/`;
+        dir.appendChild(code);
+        dir.title = entry.title;
+
+        const ranking = entry.contest?.tally?.ranking ?? [];
+        const top = ranking[0];
+        const leader = document.createElement("td");
+        if (top) {
+            leader.textContent = top.community.name ?? shortKey(top.community.publicKey);
+            leader.title = top.community.publicKey;
+        } else {
+            leader.textContent = entry.joinError ? "join failed" : entry.joined ? "no votes yet" : "syncing…";
+            leader.className = "muted";
+            if (entry.joinError) leader.title = entry.joinError;
+        }
+
+        const votes = document.createElement("td");
+        votes.textContent = top ? String(top.weight) : "—";
+        const boards = document.createElement("td");
+        boards.textContent = ranking.length > 0 ? String(ranking.length) : "—";
+
+        const mine = document.createElement("td");
+        const stored = address && entry.topic ? loadMyVote(entry, address) : undefined;
+        if (stored) {
+            mine.textContent = stored.name ?? shortKey(stored.publicKey);
+            mine.title = stored.publicKey;
+            mine.className = "status-ok";
+        } else {
+            mine.textContent = "—";
+        }
+
+        tr.append(dir, leader, votes, boards, mine);
+        body.appendChild(tr);
+    }
+}
+
+/* ---------- selected directory ---------- */
+function select(code: string) {
+    const entry = byCode.get(code);
+    if (!entry) return;
+    if (location.hash !== `#/${code}/`) location.hash = `#/${code}/`;
+    selected = entry;
+    $("dir-card").hidden = false;
+    $("community-card").hidden = false;
+    $("dir-title").textContent = `${entry.title} — directory contest`;
+    $("dir-blurb").textContent =
+        `Boards competing to host /${entry.code}/ on 5chan. The highest-scoring board resolves the ` +
+        `directory code; if it goes offline, 5chan rotates to the next-highest.`;
+    $("dir-topic").textContent = entry.topic || "(deriving…)";
+    renderDirRules(entry);
+    renderTally();
+    renderMyVote();
+    renderDirs();
+    void renderCandidates(entry);
+    void syncLeaderCommunity();
+}
+
+function renderDirRules(entry: DirEntry) {
+    const meta = directoryMeta[entry.code];
+    $("dir-rules-details").hidden = !meta;
+    if (meta) $("dir-rules").textContent = JSON.stringify({ rules: meta.rules ?? [], features: meta.features ?? {} }, null, 2);
+}
+
+function renderMyVote() {
+    const wrap = $("my-vote-wrap");
+    const address = signer.connectedAddress;
+    const stored = selected && address && selected.topic ? loadMyVote(selected, address) : undefined;
     if (!stored) {
-        card.hidden = true;
+        wrap.hidden = true;
         return;
     }
-    card.hidden = false;
+    wrap.hidden = false;
     $("my-vote-target").textContent = stored.name ? `${stored.name} (${shortKey(stored.publicKey)})` : stored.publicKey;
     $("my-vote-when").textContent = new Date(stored.at).toLocaleString();
-    const lifetimeMs = criteria.voteExpiryBuckets * criteria.blocksPerBucket * SECONDS_PER_BLOCK * 1000;
+    const lifetimeMs = sharedRules.voteExpiryBuckets * sharedRules.blocksPerBucket * SECONDS_PER_BLOCK * 1000;
     $("my-vote-expiry").textContent = `≈ ${new Date(stored.at + lifetimeMs).toLocaleString()}`;
 }
 
 function renderTally() {
-    const ranking = contest.tally?.ranking ?? [];
+    if (!selected) return;
+    const ranking = selected.contest?.tally?.ranking ?? [];
     $("tally-hint").hidden = ranking.length > 0;
     if (ranking.length === 0) {
-        $("tally-hint").textContent = "No votes yet — be the first: submit a board below.";
+        $("tally-hint").textContent = selected.joined
+            ? "No votes yet — be the first: vote for a candidate below or submit a new board."
+            : "Syncing this contest…";
         $("tally-table").hidden = true;
         return;
     }
@@ -213,24 +326,85 @@ function renderTally() {
         btn.className = "small";
         btn.textContent = "Vote";
         btn.title = `Vote for ${row.community.publicKey}`;
-        btn.onclick = () => void castVote([{ community: { publicKey: row.community.publicKey }, vote: 1 }]);
+        const entry = selected!;
+        btn.onclick = (e) => {
+            e.stopPropagation();
+            void castVote(entry, [{ community: { publicKey: row.community.publicKey }, vote: 1 }]);
+        };
         actions.appendChild(btn);
         tr.appendChild(actions);
         body.appendChild(tr);
     });
 }
 
-/* ---------- leaderboard-#1 community (loaded via pkc-js) ----------
+/* ---------- registered candidate boards (from the lists repo, fetched live) ---------- */
+const candidatesCache = new Map<string, Candidate[]>();
+
+async function renderCandidates(entry: DirEntry) {
+    const statusEl = $("candidates-status");
+    const table = $("candidates-table");
+    let candidates = candidatesCache.get(entry.code);
+    if (!candidates) {
+        statusEl.textContent = "loading the registered candidates from GitHub…";
+        table.hidden = true;
+        try {
+            candidates = await fetchCandidates(entry.code);
+            candidatesCache.set(entry.code, candidates);
+        } catch (err) {
+            if (selected === entry) statusEl.textContent = `candidate list unavailable (${(err as Error).message}) — you can still vote by public key below`;
+            return;
+        }
+    }
+    if (selected !== entry) return; // selection changed while fetching
+    if (candidates.length === 0) {
+        statusEl.textContent = `no boards registered for /${entry.code}/ yet — open a PR on the lists repo, or vote for any board by public key below`;
+        table.hidden = true;
+        return;
+    }
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+    table.hidden = false;
+    const body = $("candidates-body");
+    body.textContent = "";
+    for (const candidate of candidates) {
+        const named = candidate.address !== candidate.publicKey;
+        const tr = document.createElement("tr");
+        const board = document.createElement("td");
+        board.textContent = named ? `${candidate.address} (${shortKey(candidate.publicKey)})` : shortKey(candidate.publicKey);
+        board.title = candidate.publicKey;
+        const owner = document.createElement("td");
+        owner.textContent = candidate.owner ?? "—";
+        const added = document.createElement("td");
+        added.textContent = candidate.addedAt ? new Date(candidate.addedAt * 1000).toLocaleDateString() : "—";
+        const actions = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.className = "small";
+        btn.textContent = "Vote";
+        btn.title = `Vote for ${candidate.publicKey}`;
+        btn.onclick = () =>
+            void castVote(entry, [
+                {
+                    community: named ? { publicKey: candidate.publicKey, name: candidate.address } : { publicKey: candidate.publicKey },
+                    vote: 1
+                }
+            ]);
+        actions.appendChild(btn);
+        tr.append(board, owner, added, actions);
+        body.appendChild(tr);
+    }
+}
+
+/* ---------- leaderboard-#1 community of the SELECTED directory (loaded via pkc-js) ----------
  * The boards being voted on ARE pkc communities — a board's publicKey is its community
- * address. As soon as the leaderboard is loaded (and again whenever the leader changes),
- * load the #1 board's community over the SAME shared helia node through pkc-js
+ * address. Whenever the selected directory has a leaderboard (and whenever its leader
+ * changes), load the #1 board's community over the SAME shared helia node through pkc-js
  * (`createCommunity` + `community.update()`) and render what arrives. The community's
  * `update` event fires each time a (newer) community record lands; the first one is the
  * "loaded" moment the benchmarks panel reports. */
 type PkcCommunity = Awaited<ReturnType<Pkc["getCommunity"]>>;
 let leaderCommunity: PkcCommunity | undefined;
-// Guard key = name + publicKey: a leader whose winning bundle later gains a name (same
-// key) reloads the community WITH the name, so pkc-js can verify and display it.
+// Guard key = directory + name + publicKey: switching directories or a leader whose
+// winning bundle later gains a name (same key) reloads the community accordingly.
 let leaderKey: string | undefined;
 
 function communityStatus(text: string, cls?: "status-ok" | "status-pending") {
@@ -256,22 +430,25 @@ function renderCommunity(community: PkcCommunity) {
 }
 
 async function syncLeaderCommunity() {
-    const top = contest.tally?.ranking[0];
+    if (!selected) return;
+    const entry = selected;
+    const top = entry.contest?.tally?.ranking[0];
     const publicKey = top?.community.publicKey;
     if (!publicKey) {
-        communityStatus("waiting for the first board on the leaderboard…");
+        communityStatus(`waiting for the first board on the /${entry.code}/ leaderboard…`);
         return;
     }
     // Hand pkc-js BOTH identity halves the winning bundle carries: the canonical
     // publicKey (loads without resolution) and the claimed .bso name when there is one
     // (pkc-js resolves and verifies it — `nameResolved` — and uses it as the address).
     const name = top.community.name;
-    const key = `${name ?? ""}|${publicKey}`;
+    const key = `${entry.code}|${name ?? ""}|${publicKey}`;
     if (key === leaderKey) return; // already loading/showing this leader
     leaderKey = key;
     const label = name ?? shortKey(publicKey);
 
-    // A dethroned leader's community stops syncing — one community updating at a time.
+    // A dethroned (or deselected) leader's community stops syncing — one community
+    // updating at a time.
     const previous = leaderCommunity;
     leaderCommunity = undefined;
     $("community-info").hidden = true;
@@ -279,18 +456,18 @@ async function syncLeaderCommunity() {
     if (previous) void previous.stop().catch((err: Error) => log(`stopping previous community failed: ${err.message}`));
 
     const startedAt = performance.now();
-    communityStatus(`loading community ${label} (leaderboard #1) via pkc-js…`, "status-pending");
-    log(`leaderboard #1 is ${label} — loading its community via pkc-js createCommunity + update()`);
+    communityStatus(`loading community ${label} (/${entry.code}/ leaderboard #1) via pkc-js…`, "status-pending");
+    log(`/${entry.code}/ leaderboard #1 is ${label} — loading its community via pkc-js createCommunity + update()`);
     try {
         const community = (await pkc.createCommunity(name ? { name, publicKey } : { publicKey })) as PkcCommunity;
-        if (leaderKey !== key) return; // leader changed while constructing
+        if (leaderKey !== key) return; // leader/selection changed while constructing
         leaderCommunity = community;
         let loaded = false;
         community.on("update", () => {
             if (leaderKey !== key) return;
             if (!loaded) {
                 loaded = true;
-                markBench(`community ${label} loaded via pkc-js (from leaderboard ready)`, startedAt);
+                markBench(`community ${label} loaded via pkc-js (from /${entry.code}/ leaderboard ready)`, startedAt);
             }
             communityStatus(`community ${label} loaded — live-updating`, "status-ok");
             log(`community update: ${community.address} (title ${JSON.stringify(community.title ?? null)}, record updatedAt ${community.updatedAt})`);
@@ -332,20 +509,23 @@ function renderWallet(address: `0x${string}`) {
     $("wallet-address").textContent = address;
     $("wallet-kind").textContent =
         signer.kind === "burner" ? "burner — generated and stored in this browser" : "injected (MetaMask etc.)";
-    // The contest gate is `erc721-min-balance`: the wallet must hold a 5chan Pass.
-    // Show the live balance read; peers verify the same read at the bucket block.
+    // Every contest's gate is the same `erc721-min-balance` (shared manifest defaults):
+    // the wallet must hold a 5chan Pass. Show the live balance read; peers verify the
+    // same read at the bucket block.
     $("wallet-eligible").textContent = "checking 5chan Pass balance…";
     void renderEligibility(address);
     renderMyVote();
+    scheduleRenderDirs(); // the "Your vote" column is per-wallet
 }
 
 /* ---------- voting-window (bucket) math ----------
  * Mirrors the library's (unexported) bucket math: every verifier reads gate balances at
  * the current bucket's boundary block — the head rounded down to `blocksPerBucket`. So a
  * Pass received mid-bucket only starts counting at the NEXT boundary, up to a full
- * bucket (~1 h here) after the airdrop. */
-const sampleBlockFor = (block: number) => Math.floor(block / criteria.blocksPerBucket) * criteria.blocksPerBucket;
-const nextWindowAfter = (sampleBlock: number) => sampleBlock + criteria.blocksPerBucket;
+ * bucket (~1 h here) after the airdrop. The bucket size and gate are shared manifest
+ * defaults, identical for every directory contest. */
+const sampleBlockFor = (block: number) => Math.floor(block / sharedRules.blocksPerBucket) * sharedRules.blocksPerBucket;
+const nextWindowAfter = (sampleBlock: number) => sampleBlock + sharedRules.blocksPerBucket;
 /** "≈ HH:MM (in ~N min)" for the block `toBlock`, assuming `fromBlock` is (close to) head now. */
 function clockAtBlock(fromBlock: number, toBlock: number): string {
     const ms = Math.max(0, toBlock - fromBlock) * SECONDS_PER_BLOCK * 1000;
@@ -357,7 +537,7 @@ function clockAtBlock(fromBlock: number, toBlock: number): string {
 let eligibilityRecheck: ReturnType<typeof setTimeout> | undefined;
 
 async function renderEligibility(address: `0x${string}`) {
-    const gate = criteria.rule as unknown as { contract: `0x${string}`; min: number };
+    const gate = sharedRules.rule as unknown as { contract: `0x${string}`; min: number };
     clearTimeout(eligibilityRecheck);
     try {
         const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
@@ -405,7 +585,7 @@ async function renderEligibility(address: `0x${string}`) {
 /** Translate a peer-side eviction verdict into something actionable. The one rejection an
  * honestly-eligible voter hits is the gate sampling a balance BEFORE their Pass arrived
  * (see the voting-window note above); every other reason passes through verbatim. */
-function explainEviction(err: VoteEvictedError): string {
+function explainEviction(entry: DirEntry, err: VoteEvictedError): string {
     const gated = /^not admitted: rule score is 0n at block (\d+)$/.exec(err.verdict.reason);
     if (gated) {
         const sampleBlock = Number(gated[1]);
@@ -413,12 +593,12 @@ function explainEviction(err: VoteEvictedError): string {
         // The bundle was block-stamped at publish time, moments before this eviction —
         // close enough to head for a wall-clock estimate without another RPC read.
         return (
-            `Your vote was rejected: your wallet held no 5chan Pass at block ${sampleBlock}, where this voting ` +
+            `Your /${entry.code}/ vote was rejected: your wallet held no 5chan Pass at block ${sampleBlock}, where this voting ` +
             `window's balances are read — a Pass received after that block does not count yet. The next window ` +
             `opens at block ${nextBlock} (${clockAtBlock(err.bundle.blockNumber, nextBlock)}); publish your vote again then.`
         );
     }
-    return `Your vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`;
+    return `Your /${entry.code}/ vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`;
 }
 
 /* ---------- voting ---------- */
@@ -430,8 +610,12 @@ function showWalletError(message: string) {
     log(message);
 }
 
-async function castVote(votes: Vote[]) {
+async function castVote(entry: DirEntry, votes: Vote[]) {
     if (publishing) return;
+    if (!voter) {
+        log("not ready to vote yet — still booting");
+        return;
+    }
     if (!signer.connectedAddress) {
         showWalletError(
             "No wallet yet — your vote must be signed by one. Connect an extension wallet (MetaMask etc.) or generate a free wallet in this browser, then vote again."
@@ -440,12 +624,12 @@ async function castVote(votes: Vote[]) {
     }
     publishing = true;
     try {
-        const vote = await voter.createContestVote({ criteria, votes });
-        vote.on("publishingstatechange", (state: string) => log(`publishing state: ${state}`));
+        const vote = await voter.createContestVote({ criteria: entry.criteria, votes });
+        vote.on("publishingstatechange", (state: string) => log(`/${entry.code}/ publishing state: ${state}`));
         // Post-hoc rejection feedback: fires AFTER publish() resolved if a deferred check
         // (background gate read / name resolution) evicts this vote. The contest-level
         // handler owns the visible wallet-card alert; this keeps the debug log complete.
-        vote.on("error", (err: unknown) => log(`vote error: ${err instanceof Error ? err.message : String(err)}`));
+        vote.on("error", (err: unknown) => log(`/${entry.code}/ vote error: ${err instanceof Error ? err.message : String(err)}`));
         const { recipientCount } = await vote.publish();
         // Name WHAT was voted for — a log full of anonymous "vote published" lines is
         // useless when several votes fly in one session.
@@ -453,15 +637,15 @@ async function castVote(votes: Vote[]) {
             .map((v) => `${v.community.name ?? shortKey(v.community.publicKey)}:${v.vote >= 0 ? "+" : ""}${v.vote}`)
             .join(", ");
         log(
-            `vote published for [${votedFor || "(empty ballot — retracts previous vote)"}] by ${signer.connectedAddress} ` +
+            `/${entry.code}/ vote published for [${votedFor || "(empty ballot — retracts previous vote)"}] by ${signer.connectedAddress} ` +
                 `(gossipsub sent it directly to ${recipientCount} peer${recipientCount === 1 ? "" : "s"})`
         );
         const address = signer.connectedAddress;
         if (address) {
-            if (votes.length === 0) localStorage.removeItem(myVoteKey(address));
+            if (votes.length === 0) localStorage.removeItem(myVoteKey(entry, address));
             else
                 localStorage.setItem(
-                    myVoteKey(address),
+                    myVoteKey(entry, address),
                     JSON.stringify({
                         publicKey: votes[0].community.publicKey,
                         name: votes[0].community.name,
@@ -470,6 +654,7 @@ async function castVote(votes: Vote[]) {
                 );
         }
         renderMyVote();
+        scheduleRenderDirs();
     } catch (err) {
         const message = (err as Error).message ?? String(err);
         if (err instanceof InvalidCommunityNameError)
@@ -477,16 +662,37 @@ async function castVote(votes: Vote[]) {
             // not resolve to the claimed key, so every peer would silently drop the vote.
             showWalletError(`Vote refused: ${message}`);
         else if (message.includes("NoPeersSubscribedToTopic") || message.includes("no peers"))
-            log("publish failed: not connected to any topic peer yet — wait for the seeder connection and retry.");
-        else log(`publish failed: ${message}`);
+            log(`/${entry.code}/ publish failed: not connected to any topic peer yet — wait for the seeder connection and retry.`);
+        else log(`/${entry.code}/ publish failed: ${message}`);
     } finally {
         publishing = false;
     }
 }
 
 /* ---------- boot ---------- */
+/** Minimal promise-concurrency limiter: joining 63 contests at once would stampede the
+ * seeder's checkpoint fetch and the RPCs; a handful in flight keeps boot smooth. */
+function pLimit(limit: number) {
+    let active = 0;
+    const queue: (() => void)[] = [];
+    const next = () => {
+        active--;
+        queue.shift()?.();
+    };
+    return <T>(fn: () => Promise<T>): Promise<T> =>
+        new Promise((resolve, reject) => {
+            const run = () => {
+                active++;
+                fn().then(resolve, reject).finally(next);
+            };
+            active < limit ? run() : queue.push(run);
+        });
+}
+
+const selectedCodeFromHash = () => /^#\/?([a-z0-9]+)\/?$/.exec(location.hash)?.[1];
+
 async function main() {
-    log("starting pkc-js with its in-browser libp2p/Helia node (shared by community loading AND vote sync)…");
+    log(`starting pkc-js with its in-browser libp2p/Helia node (shared by community loading AND syncing ${entries.length} directory contests)…`);
     const { pkc: pkcInstance, helia } = await startPkcNode();
     pkc = pkcInstance;
     markBench("pkc-js ready (in-browser helia/libp2p node booted)");
@@ -510,16 +716,28 @@ async function main() {
         }
     }, 2000);
 
-    const topic = await topicFor(criteria);
-    storageKey = `bso-vote:${topic}`;
-    $("topic").textContent = topic;
-    $("criteria-json").textContent = JSON.stringify(criteria, null, 2);
-    log(`contest topic: ${topic}`);
+    $("criteria-json").textContent = JSON.stringify(directoryManifest, null, 2);
+    for (const entry of entries) {
+        entry.topic = await topicFor(entry.criteria);
+        byTopic.set(entry.topic, entry);
+    }
+    log(`${entries.length} directory contest topics derived`);
+    renderDirs();
+
+    // Directory display metadata (titles are already in the criteria; this adds each
+    // directory's expected rules/features panel). Best-effort, never blocks anything.
+    void fetchDirectoryMeta().then(
+        (meta) => {
+            directoryMeta = meta;
+            if (selected) renderDirRules(selected);
+        },
+        (err: Error) => log(`directory metadata fetch failed (rules panel unavailable): ${err.message}`)
+    );
 
     /* Wallet buttons + restore, before the network sync below: none of this needs the
      * voter, and a returning visitor should see their identity without waiting or clicking.
-     * The restore waits for the topic above only because renderMyVote reads the
-     * topic-scoped my-vote record. */
+     * The restore waits for the topics above only because renderMyVote and the overview's
+     * "Your vote" column read topic-scoped my-vote records. */
     if (BrowserWalletSigner.hasStoredBurner()) {
         const address = signer.useBurner();
         log(`browser wallet restored from a previous visit: ${address}`);
@@ -559,20 +777,21 @@ async function main() {
             return;
         const wasActive = signer.kind === "burner";
         const address = signer.forgetBurner();
-        // The my-vote record is keyed by that address, which can never be active again.
-        if (address) localStorage.removeItem(myVoteKey(address));
+        // The my-vote records are keyed by that address, which can never be active again.
+        if (address) for (const entry of entries) localStorage.removeItem(myVoteKey(entry, address));
         refreshBurnerButtons();
         if (wasActive) {
             $("wallet-info").hidden = true;
             $("connect-btn").textContent = "Connect wallet";
             renderMyVote();
+            scheduleRenderDirs();
         }
         log(address ? `browser wallet deleted: ${address}` : "no stored browser wallet to delete");
     };
 
     /* ---------- connectivity diagnostics ----------
      * Everything vote-sync does rides three observable seams: connections, gossipsub
-     * subscriptions on the contest topic, and the cold-join checkpoint pull over the
+     * subscriptions on the contest topics, and the cold-join checkpoint pulls over the
      * fetch protocol. Log all three so "why don't I see votes?" is answerable from
      * the on-page log alone. */
     const libp2p = helia.libp2p;
@@ -586,19 +805,18 @@ async function main() {
     libp2p.addEventListener("connection:close", (evt) => log(`conn close: ${evt.detail.remotePeer}`));
     pubsub.addEventListener("subscription-change", (evt) => {
         const detail = evt.detail as { peerId: unknown; subscriptions: { topic: string; subscribe: boolean }[] };
-        for (const sub of detail.subscriptions ?? []) {
-            if (sub.topic !== topic) continue;
-            log(
-                `topic ${sub.subscribe ? "subscribe" : "unsubscribe"}: ${detail.peerId} ` +
-                    `(${pubsub.getSubscribers(topic).length} subscriber(s) visible)`
-            );
-        }
+        // One line per peer, not per topic: a seeder (un)subscribing all 63 at once is one event.
+        const codes = (detail.subscriptions ?? [])
+            .filter((sub) => byTopic.has(sub.topic))
+            .map((sub) => `${sub.subscribe ? "+" : "-"}/${byTopic.get(sub.topic)!.code}/`);
+        if (codes.length > 0) log(`topic subscriptions from ${detail.peerId}: ${codes.join(" ")}`);
     });
     pubsub.addEventListener("message", (evt) => {
         const detail = evt.detail as { topic: string; data: Uint8Array; from?: unknown };
-        if (detail.topic !== topic) return;
+        const entry = byTopic.get(detail.topic);
+        if (!entry) return;
         void (async () => {
-            log(`gossip from ${detail.from ?? "(unsigned)"}: ${await describeGossipMessage(detail.data)}`);
+            log(`/${entry.code}/ gossip from ${detail.from ?? "(unsigned)"}: ${await describeGossipMessage(detail.data)}`);
             const live = await extractLiveBundle(detail.data);
             if (live) addBundle(live, "live gossip");
         })();
@@ -614,10 +832,8 @@ async function main() {
             const value = await realFetch(peer, key, opts);
             log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
             const record = value === undefined ? undefined : parseRootRecord(value);
-            if (record?.chunks?.length) {
-                checkpointChunks = record.chunks;
-                void refreshCheckpointBundles(helia.blockstore);
-            }
+            for (const chunk of record?.chunks ?? []) checkpointChunks.set(chunk.toString(), chunk);
+            if (record?.chunks?.length) void refreshCheckpointBundles(helia.blockstore);
             return value;
         } catch (err) {
             log(`checkpoint fetch failed: ${(err as Error).message}`);
@@ -666,55 +882,19 @@ async function main() {
         nameResolvers: makeNameResolvers()
     });
 
-    let sawBoards = false;
-    contest = await voter.createContest({ criteria });
-    contest.on("update", () => {
-        // Same line the seeder logs, so the two sides are directly comparable.
-        const ranking = contest.tally?.ranking ?? [];
-        const top = ranking[0];
-        log(
-            `tally update: ${ranking.length} board(s)` +
-                (top ? `, leader ${top.community.name ?? shortKey(top.community.publicKey)} with ${top.weight} vote(s)` : "")
-        );
-        if (!sawBoards && ranking.length > 0) {
-            sawBoards = true;
-            markBench(`first votes on the leaderboard (${ranking.length} board(s))`);
-        }
-        renderTally();
-        // The moment the leaderboard has content, the #1 board's community loads — and
-        // if a later vote flips the leader, the shown community follows it.
-        void syncLeaderCommunity();
-        // The chase that fired this update stored any checkpoint blocks it pulled.
-        void refreshCheckpointBundles(helia.blockstore);
+    /* Selection + voting UI wiring, BEFORE the (long) join below: overview rows are
+     * clickable and a #/g/ deep link selects immediately; castVote guards on the pieces
+     * that aren't ready yet. */
+    window.addEventListener("hashchange", () => {
+        const code = selectedCodeFromHash();
+        if (code && code !== selected?.code) select(code);
     });
-    renderBundles();
-    contest.on("error", (err: unknown) => {
-        // Our own published vote failed a deferred check (gate read or name resolution) and
-        // was evicted — every honest peer drops it the same way, so it counts nowhere. Show
-        // it where the user acted (the wallet card) and retract the stale "Your vote" card.
-        if (err instanceof VoteEvictedError) {
-            showWalletError(explainEviction(err));
-            const address = err.bundle.address;
-            if (address.toLowerCase() === signer.connectedAddress?.toLowerCase()) {
-                localStorage.removeItem(myVoteKey(address));
-                renderMyVote();
-            }
-            return;
-        }
-        log(`contest error (retrying): ${err instanceof Error ? err.message : String(err)}`);
-    });
-    await contest.update();
-    booted = true;
-    markBench("leaderboard loaded (topic joined + persisted votes restored)");
-    log("joined the contest topic; syncing votes…");
-    // "Community loads immediately after the leaderboard": if the restored snapshot
-    // already ranks a leader, this starts its community load right now — otherwise the
-    // tally-update handler above fires it the moment the first votes arrive.
-    void syncLeaderCommunity();
+    const initial = selectedCodeFromHash();
+    if (initial && byCode.has(initial)) select(initial);
 
-    /* wire the voting UI (needs the voter, so only after boot) */
     $<HTMLFormElement>("new-board-form").onsubmit = (e) => {
         e.preventDefault();
+        if (!selected) return;
         const publicKey = $<HTMLInputElement>("board-key").value.trim();
         const name = $<HTMLInputElement>("board-name").value.trim();
         const community = CommunitySchema.safeParse(name ? { publicKey, name } : { publicKey });
@@ -722,10 +902,89 @@ async function main() {
             log(`invalid board: ${community.error.issues.map((i) => i.message).join("; ")}`);
             return;
         }
-        void castVote([{ community: community.data, vote: 1 }]);
+        void castVote(selected, [{ community: community.data, vote: 1 }]);
+    };
+    $("withdraw-btn").onclick = () => {
+        if (selected) void castVote(selected, []);
     };
 
-    $("withdraw-btn").onclick = () => void castVote([]);
+    /* Join every directory contest (bounded concurrency). Each contest's `update` event
+     * re-renders its overview row, and the selected directory's full panel when it's the
+     * one that changed. */
+    let sawVotes = false;
+    let joinedCount = 0;
+    const renderJoinProgress = () =>
+        ($("contest-count").textContent = `${entries.length} directory contests — ${joinedCount} joined${joinedCount < entries.length ? "…" : ""}`);
+    renderJoinProgress();
+    const limit = pLimit(8);
+    await Promise.all(
+        entries.map((entry) =>
+            limit(async () => {
+                try {
+                    const contest = await voter.createContest({ criteria: entry.criteria });
+                    entry.contest = contest;
+                    contest.on("update", () => {
+                        const ranking = contest.tally?.ranking ?? [];
+                        const top = ranking[0];
+                        // Same line the seeder logs, so the two sides are directly comparable.
+                        if (top)
+                            log(
+                                `/${entry.code}/ tally update: ${ranking.length} board(s), leader ` +
+                                    `${top.community.name ?? shortKey(top.community.publicKey)} with ${top.weight} vote(s)`
+                            );
+                        if (!sawVotes && ranking.length > 0) {
+                            sawVotes = true;
+                            markBench(`first votes on a leaderboard (/${entry.code}/, ${ranking.length} board(s))`);
+                        }
+                        scheduleRenderDirs();
+                        if (entry === selected) {
+                            renderTally();
+                            // The moment the selected leaderboard has content, its #1 board's
+                            // community loads — and if a later vote flips the leader, the
+                            // shown community follows it.
+                            void syncLeaderCommunity();
+                        }
+                        // The chase that fired this update stored any checkpoint blocks it pulled.
+                        void refreshCheckpointBundles(helia.blockstore);
+                    });
+                    contest.on("error", (err: unknown) => {
+                        // Our own published vote failed a deferred check (gate read or name
+                        // resolution) and was evicted — every honest peer drops it the same
+                        // way, so it counts nowhere. Show it where the user acted (the wallet
+                        // card) and retract the stale "Your vote" record.
+                        if (err instanceof VoteEvictedError) {
+                            showWalletError(explainEviction(entry, err));
+                            const address = err.bundle.address;
+                            if (address.toLowerCase() === signer.connectedAddress?.toLowerCase()) {
+                                localStorage.removeItem(myVoteKey(entry, address));
+                                renderMyVote();
+                                scheduleRenderDirs();
+                            }
+                            return;
+                        }
+                        log(`/${entry.code}/ contest error (retrying): ${err instanceof Error ? err.message : String(err)}`);
+                    });
+                    await contest.update();
+                    entry.joined = true;
+                } catch (err) {
+                    entry.joinError = (err as Error).message;
+                    log(`/${entry.code}/ join failed: ${entry.joinError}`);
+                } finally {
+                    joinedCount++;
+                    renderJoinProgress();
+                    scheduleRenderDirs();
+                }
+            })
+        )
+    );
+    booted = true;
+    markBench(`all ${entries.length} contests joined (topics joined + persisted votes restored)`);
+    log(`joined all ${entries.length} directory contest topics; syncing votes…`);
+    renderBundles();
+    if (selected) {
+        renderTally();
+        void syncLeaderCommunity();
+    }
 }
 
 main().catch((err) => {

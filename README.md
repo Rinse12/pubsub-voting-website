@@ -1,22 +1,32 @@
-# BSO board vote — pubsub voting on a real website
+# 5chan directory votes — pubsub voting on a real website
 
 **Live site: <https://bso-board-vote.netlify.app>**
 
 A static website where people vote over libp2p **pubsub** — no server counts the votes.
-The contest is **NFT-gated: one vote per wallet holding at least one 5chan Pass**, the
+**One contest per 5chan directory** (`/g/`, `/a/`, `/b/`… — 63 of them, from the
+canonical [5chan-directories list](https://github.com/bitsocialnet/lists/tree/master/5chan-directories)):
+each directory's contest elects which board hosts that directory code — the
+highest-scoring board resolves it, and if it goes offline 5chan rotates to the
+next-highest. Every contest is **NFT-gated: one vote per wallet per directory, for
+wallets holding at least one 5chan Pass**, the
 [FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9)
 (`erc721-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
 still costs no gas). Every peer reads the voter's `balanceOf` at the contest's pinned
 bucket block before counting the vote, so an ineligible wallet's ballot is dropped by
 the whole network, not by a moderator. Visitors without an extension wallet can have the
 page **generate a burner wallet in the browser** (key persisted in localStorage) and ask
-the Pass owner to airdrop to it. Voters pick an existing board from the live tally or
-submit a new board (a `12D3KooW…` public key, optionally a verified `.bso` name).
+the Pass owner to airdrop to it. Voters pick a directory, then vote for a board on its
+live tally, one of the **registered candidate boards** (fetched live from the lists
+repo, where anyone can PR their board in), or a new board (a `12D3KooW…` public key,
+optionally a verified `.bso` name).
 
 Built on [`@bitsocial/pubsub-voting`](https://github.com/bitsocialnet/pubsub-voting):
 votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic derived
 from the contest rules, validated by every peer (signature + bucketed-block freshness)
-**before** re-forwarding, and merged with a last-write-wins CRDT.
+**before** re-forwarding, and merged with a last-write-wins CRDT. The 63 contests are
+authored as ONE directory manifest (shared `defaults` + one entry per directory) and
+derived through the library's `deriveDirectoryCriteria` — the exact multi-contest flow
+the library documents for 5chan.
 
 The page runs **one** in-browser Helia/libp2p node, built and owned by
 [`@pkcprotocol/pkc-js`](https://github.com/pkcprotocol/pkc-js) and shared by both
@@ -28,7 +38,8 @@ and `PubsubVoter` syncs the votes on the same node through the public
 panel on the page reports how long the node boot, the leaderboard (votes), and the
 community load each took.
 
-Contest topic: `bitsocial-votes/bafyreicyjfqthbsnspmqffnbbv4jvxymimso3z4pgizysrs5qulu6jz5nq`
+Contest topics: one per directory, `bitsocial-votes/<CID(dag-cbor(criteria))>` — print
+them all with `npm run topic`.
 
 ## Architecture
 
@@ -37,7 +48,7 @@ Netlify (static HTML/JS)                     new-plebbit (89.36.231.48)
 ┌──────────────────────────┐                ┌────────────────────────────────┐
 │ browser voter            │   WSS          │ seeder: Node.js Helia node     │
 │  - ONE pkc-js Helia node─┼───────────────▶│  - AutoTLS cert (libp2p.direct)│
-│    shared by votes AND   │  (AutoTLS)     │  - joins the contest topic     │
+│    shared by votes AND   │  (AutoTLS)     │  - joins all 63 contest topics │
 │    community loading     │                │  - validates + forwards votes  │
 │  - MetaMask signs ballot │                │  - serves checkpoint to        │
 │  - renders live tally +  │                │    cold-joining browsers       │
@@ -75,17 +86,22 @@ peers noticing — validation is done by every participant.
 ## Repo layout
 
 ```
-shared/    criteria document (defines the contest AND the topic), viem chain
-           factory, .bso name resolvers, wire-log decoders
+shared/    directory-manifest.{json,ts} (GENERATED — defines all 63 contests AND
+           their topics; .json ships to the seeder, .ts into the site bundle),
+           contests.ts (derives the criteria), viem chain factory, .bso name
+           resolvers, wire-log decoders
 src/       the website: pkc-js boot (the one shared Helia node), injected+burner
-           wallet signer, leader-community loader, benchmarks panel, UI
-scripts/   derive-topic.ts — validate criteria + print the topic (npm run topic)
+           wallet signer, directory overview + per-directory voting UI, lists-repo
+           candidate fetching, leader-community loader, benchmarks panel
+scripts/   generate-directory-manifest.ts — regenerate the manifest from the lists
+           repo (npm run manifest); derive-topic.ts — validate every contest +
+           print all topics (npm run topic)
 tests/     regression tests (npm test)
 ```
 
 The always-on seeder is **not** in this repo: seeding is done by
 [bitsocial-seeder](https://github.com/bitsocialnet/bitsocial-seeder) (branch
-`seed-pubsub-votes`), driven by a manifest that embeds this repo's criteria document.
+`seed-pubsub-votes`), driven by this repo's `shared/directory-manifest.json`.
 An earlier in-repo `seeder/` was deleted once bitsocial-seeder took over — it's in git
 history if ever needed.
 
@@ -103,10 +119,11 @@ npx netlify-cli deploy --prod --dir dist --no-build   # site: bso-board-vote
 
 The canonical seeder is the `bitsocial-seeder` systemd unit on new-plebbit (checkout
 `/root/bitsocial-seeder`, branch `seed-pubsub-votes`, data in
-`/root/bitsocial-seeder-data`). It derives the topic from
-`/root/bitsocial-seeder/bso-board-vote-manifest.jsonc`, which must stay in sync with
-[shared/criteria.ts](shared/criteria.ts) — any criteria change means updating the
-manifest AND redeploying the site (the topic forks, see below).
+`/root/bitsocial-seeder-data`). It derives all 63 topics from
+`/root/bitsocial-seeder/bso-board-vote-manifest.jsonc`, which must be a copy of this
+repo's [shared/directory-manifest.json](shared/directory-manifest.json) — any manifest
+change means copying it over AND redeploying the site (the changed contests' topics
+fork, see below).
 
 ```bash
 ssh new-plebbit
@@ -154,10 +171,19 @@ site uses the library as-is with no join-ordering workaround.
 
 ### Changing the contest rules
 
-Anything in the `criteria` object in [shared/criteria.ts](shared/criteria.ts) (gate
-rule, expiry, `contestId`) changes the criteria bytes and therefore **forks the
-topic** — old votes don't carry over. (`ETH_RPC_URLS` in the same file is client-local
-transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy the site and update the bitsocial-seeder manifest (then restart it) together. History: contest
+The contests are defined by the generated manifest — edit
+[scripts/generate-directory-manifest.ts](scripts/generate-directory-manifest.ts) (the
+shared `defaults`, the contestId suffix, or the naming scheme) and run
+`npm run manifest`; never hand-edit the emitted files. Changing `defaults` re-derives
+EVERY directory's criteria bytes and therefore **forks all 63 topics** at once (bump
+the `CONTEST_ID_SUFFIX` for a deliberate fresh start); a new directory appearing in the
+lists repo adds one new contest without touching the others. Old votes don't carry over
+a fork. (`ETH_RPC_URLS` in [shared/contests.ts](shared/contests.ts) is client-local
+transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy
+the site and copy the manifest to the bitsocial-seeder (then restart it) together.
+History: single-contest era — contest 4 `5chan-pass-vote-test-1` (topic
+`…rs5qulu6jz5nq`, the first 5chan-Pass-gated one) was replaced by the 63 directory
+contests; before it, contest
 `bso-board-vote-test-1` (topic `…zm7ardh7tfnccgwhulil63ybopugfh2d4`) was gated on
 holding ≥ 1 BSO (`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`) via a vendored
 `erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers;

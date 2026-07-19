@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "node tests/router-fault-tolerance.test.ts",
-    "topic": "tsx scripts/derive-topic.ts"
+    "topic": "tsx scripts/derive-topic.ts",
+    "manifest": "tsx scripts/generate-directory-manifest.ts"
   },
   "dependencies": {
     "@bitsocial/bso-resolver": "0.0.10",

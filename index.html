@@ -3,17 +3,20 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>BSO board vote</title>
+        <title>5chan directory votes</title>
         <link rel="stylesheet" href="/src/style.css" />
     </head>
     <body>
         <main>
             <header>
-                <h1>5chan Pass board vote</h1>
+                <h1>5chan directory votes</h1>
                 <p class="sub">
-                    Trustless voting over libp2p pubsub. <strong>Every wallet holding a 5chan Pass</strong> (a free
-                    testnet NFT on Base Sepolia) gets exactly one vote — no gas, no transaction — signed in your
-                    browser, verified by every peer against the chain, counted with no server.
+                    Which board should host each 5chan directory — <code>/g/</code>, <code>/a/</code>,
+                    <code>/b/</code>…? One trustless contest per directory over libp2p pubsub.
+                    <strong>Every wallet holding a 5chan Pass</strong> (a free testnet NFT on Base Sepolia) gets
+                    exactly one vote per directory — no gas, no transaction — signed in your browser, verified by
+                    every peer against the chain, counted with no server. The highest-scoring board resolves the
+                    directory code; if it goes offline, 5chan rotates to the next-highest.
                 </p>
             </header>
 
@@ -25,17 +28,18 @@
                     <dd><code id="peer-id">—</code></dd>
                     <dt>Connected peers</dt>
                     <dd id="peer-count">0</dd>
-                    <dt>Topic</dt>
-                    <dd><code id="topic" class="wrap">—</code></dd>
+                    <dt>Contests</dt>
+                    <dd id="contest-count">joining…</dd>
                 </dl>
                 <details id="criteria-details">
-                    <summary>Contest criteria — the document this topic is derived from</summary>
+                    <summary>Directory manifest — the document every contest topic is derived from</summary>
                     <p class="hint">
-                        The topic is <code>bitsocial-votes/&lt;CID&gt;</code>, where the CID is the hash of this
-                        exact document (canonical dag-cbor). Every peer validates votes against these rules, so
-                        changing any byte forks the contest onto a different topic. RPC endpoints are deliberately
-                        <em>not</em> part of the document — each client picks its own, so a dead provider can be
-                        swapped without forking.
+                        Each directory's contest criteria is <code>{ ...defaults, ...entry }</code> from this
+                        manifest (the library's <code>deriveDirectoryCriteria</code>), and its topic is
+                        <code>bitsocial-votes/&lt;CID&gt;</code> of that derived document (canonical dag-cbor).
+                        Every peer validates votes against these rules, so changing any byte forks that
+                        directory's contest onto a different topic. RPC endpoints are deliberately
+                        <em>not</em> part of the document — each client picks its own.
                     </p>
                     <pre id="criteria-json">—</pre>
                 </details>
@@ -49,12 +53,12 @@
                 <h2>Wallet</h2>
                 <p class="hint">
                     Why a wallet? Your vote is an EIP-712 message and the signature <em>is</em> your voter identity —
-                    a free signature, never a transaction. This test contest is gated: only wallets holding a
+                    a free signature, never a transaction. These test contests are gated: only wallets holding a
                     <strong>5chan Pass</strong> (ERC-721 on Base Sepolia) are eligible — every peer reads your
-                    balance on-chain before counting your vote. Connect the wallet that received the Pass
-                    (MetaMask etc.), or generate a throwaway wallet in this browser and ask the Pass owner to
-                    airdrop to it — it is saved here and restored automatically on your next visit, until you
-                    forget it (or clear site data).
+                    balance on-chain before counting your vote, and each directory counts your wallet once.
+                    Connect the wallet that received the Pass (MetaMask etc.), or generate a throwaway wallet in
+                    this browser and ask the Pass owner to airdrop to it — it is saved here and restored
+                    automatically on your next visit, until you forget it (or clear site data).
                 </p>
                 <div class="row">
                     <button id="connect-btn">Connect wallet</button>
@@ -72,35 +76,110 @@
                 </dl>
             </section>
 
-            <section class="card" id="tally-card">
-                <h2>Boards</h2>
-                <p class="hint" id="tally-hint">Waiting for the first tally…</p>
+            <section class="card" id="dirs-card">
+                <h2>Directories</h2>
+                <p class="hint">
+                    All directory contests, syncing live. Pick a directory to see its full leaderboard,
+                    the registered candidate boards, and to vote.
+                </p>
+                <div class="scroll-y">
+                    <table id="dirs-table">
+                        <thead>
+                            <tr><th>Dir</th><th>Leader</th><th>Votes</th><th>Boards</th><th>Your vote</th></tr>
+                        </thead>
+                        <tbody id="dirs-body"></tbody>
+                    </table>
+                </div>
+                <details id="bundles-details">
+                    <summary id="bundles-summary">Downloaded vote bundles (0)</summary>
+                    <p class="hint">
+                        The raw signed vote bundles this tab has admitted across all contests, decoded and
+                        tagged with how each arrived: live gossip, checkpoint chunk, chase, snapshot restore,
+                        or local vote. Each CID is the bundle block's content address — the identity a
+                        checkpoint carries and the key peers cache verification verdicts under.
+                    </p>
+                    <pre id="bundles-json">none yet</pre>
+                </details>
+            </section>
+
+            <section class="card" id="dir-card" hidden>
+                <h2 id="dir-title">—</h2>
+                <p class="hint" id="dir-blurb"></p>
+                <details id="dir-rules-details" hidden>
+                    <summary>Expected directory rules &amp; UX defaults (from the 5chan lists registry)</summary>
+                    <pre id="dir-rules"></pre>
+                </details>
+                <dl class="kv">
+                    <dt>Topic</dt>
+                    <dd><code id="dir-topic" class="wrap">—</code></dd>
+                </dl>
+
+                <h3>Leaderboard</h3>
+                <p class="hint" id="tally-hint">No votes yet — be the first: vote for a candidate below or submit a new board.</p>
                 <table id="tally-table" hidden>
                     <thead>
                         <tr><th>#</th><th>Board</th><th>Votes</th><th>Status</th><th></th></tr>
                     </thead>
                     <tbody id="tally-body"></tbody>
                 </table>
-                <details id="bundles-details">
-                    <summary id="bundles-summary">Downloaded vote bundles (0)</summary>
+
+                <h3>Registered candidate boards</h3>
+                <p class="hint">
+                    Boards registered for this directory in the public
+                    <a href="https://github.com/bitsocialnet/lists/tree/master/5chan-directories" target="_blank" rel="noreferrer">5chan lists registry</a>
+                    (anyone can PR their board in) — fetched live from GitHub. Voting for one signs a ballot for
+                    its public key.
+                </p>
+                <p class="hint" id="candidates-status">—</p>
+                <table id="candidates-table" hidden>
+                    <thead>
+                        <tr><th>Board</th><th>Owner</th><th>Registered</th><th></th></tr>
+                    </thead>
+                    <tbody id="candidates-body"></tbody>
+                </table>
+
+                <h3>Vote for a new board</h3>
+                <form id="new-board-form">
+                    <label>
+                        Board public key <span class="req">(required)</span>
+                        <input id="board-key" placeholder="12D3KooW…" autocomplete="off" spellcheck="false" required />
+                    </label>
+                    <label>
+                        Board name <span class="req">(optional — leave empty unless the board owns this .bso name)</span>
+                        <input id="board-name" placeholder="example.bso" autocomplete="off" spellcheck="false" />
+                    </label>
                     <p class="hint">
-                        The raw signed vote bundles this tab has admitted, decoded and tagged with how each
-                        arrived: live gossip, checkpoint chunk, chase, snapshot restore, or local vote. Each
-                        CID is the bundle block's content address — the identity a checkpoint carries and the
-                        key peers cache verification verdicts under.
+                        A name is a verified claim: it must resolve on-chain to this exact public key. A name that
+                        provably doesn't is <strong>refused before signing</strong>, with the reason shown in the
+                        wallet card. If the registry is unreachable the vote publishes anyway and is re-checked in
+                        the background — you'll see a rejection there if that check fails.
                     </p>
-                    <pre id="bundles-json">none yet</pre>
-                </details>
+                    <button type="submit" id="new-board-submit">Sign &amp; publish vote</button>
+                </form>
+
+                <div id="my-vote-wrap" hidden>
+                    <h3>Your vote in this directory</h3>
+                    <dl class="kv">
+                        <dt>Voted for</dt>
+                        <dd><code id="my-vote-target"></code></dd>
+                        <dt>Cast</dt>
+                        <dd id="my-vote-when"></dd>
+                        <dt>Expires</dt>
+                        <dd id="my-vote-expiry"></dd>
+                    </dl>
+                    <p class="hint">Votes decay: re-vote before expiry (just vote again) to keep it counted.</p>
+                    <button id="withdraw-btn" class="danger">Withdraw vote</button>
+                </div>
             </section>
 
-            <section class="card" id="community-card">
+            <section class="card" id="community-card" hidden>
                 <h2>Leading board's community</h2>
                 <p class="hint">
-                    The boards on the leaderboard are pkc communities — a board's public key is its community
-                    address. As soon as the leaderboard loads, this page loads the <strong>#1 board's
-                    community</strong> through pkc-js (<code>createCommunity</code> +
-                    <code>community.update()</code>) over the <em>same</em> in-browser helia node the votes
-                    sync on, and follows the leader if a later vote changes it.
+                    The boards on a leaderboard are pkc communities — a board's public key is its community
+                    address. This page loads the selected directory's <strong>#1 board's community</strong>
+                    through pkc-js (<code>createCommunity</code> + <code>community.update()</code>) over the
+                    <em>same</em> in-browser helia node the votes sync on, and follows the leader if a later
+                    vote changes it.
                 </p>
                 <p id="community-status">waiting for the leaderboard…</p>
                 <dl class="kv" id="community-info" hidden>
@@ -123,48 +202,13 @@
                 </details>
             </section>
 
-            <section class="card" id="new-board-card">
-                <h2>Vote for a new board</h2>
-                <form id="new-board-form">
-                    <label>
-                        Board public key <span class="req">(required)</span>
-                        <input id="board-key" placeholder="12D3KooW…" autocomplete="off" spellcheck="false" required />
-                    </label>
-                    <label>
-                        Board name <span class="req">(optional — leave empty unless the board owns this .bso name)</span>
-                        <input id="board-name" placeholder="example.bso" autocomplete="off" spellcheck="false" />
-                    </label>
-                    <p class="hint">
-                        A name is a verified claim: it must resolve on-chain to this exact public key. A name that
-                        provably doesn't is <strong>refused before signing</strong>, with the reason shown above. If
-                        the registry is unreachable the vote publishes anyway and is re-checked in the background —
-                        you'll see a rejection here if that check fails.
-                    </p>
-                    <button type="submit">Sign &amp; publish vote</button>
-                </form>
-            </section>
-
-            <section class="card" id="my-vote-card" hidden>
-                <h2>Your vote</h2>
-                <dl class="kv">
-                    <dt>Voted for</dt>
-                    <dd><code id="my-vote-target"></code></dd>
-                    <dt>Cast</dt>
-                    <dd id="my-vote-when"></dd>
-                    <dt>Expires</dt>
-                    <dd id="my-vote-expiry"></dd>
-                </dl>
-                <p class="hint">Votes decay: re-vote before expiry (just vote again) to keep it counted.</p>
-                <button id="withdraw-btn" class="danger">Withdraw vote</button>
-            </section>
-
             <section class="card" id="bench-card">
                 <h2>Benchmarks</h2>
                 <p class="hint">
                     Wall-clock load times measured in this tab. "Took" is the duration of that step from when
                     it could start; "done at" is how far into the page load it finished. The community row
-                    measures pkc-js loading the #1 board's community, timed from the moment the leaderboard
-                    was ready (the earliest it could begin).
+                    measures pkc-js loading a leaderboard #1's community, timed from the moment that
+                    leaderboard was ready (the earliest it could begin).
                 </p>
                 <table id="bench-table" hidden>
                     <thead>
