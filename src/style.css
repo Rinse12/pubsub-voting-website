@@ -97,6 +97,7 @@ td .status-pending { color: var(--warn); }
 
 .badge-ok { color: var(--ok); }
 .badge-bad { color: var(--bad); }
+.badge-warn { color: var(--warn); }
 
 #wallet-error {
     color: var(--bad);
