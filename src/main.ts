@@ -45,6 +45,9 @@ interface DirEntry {
     topic: string; // derived before contests are created
     contest?: Contest;
     joined: boolean; // update() resolved (topic joined + snapshot restored)
+    /** A root record for this contest was actually fetched (or answered "no record") —
+     * before this, an empty ranking means "still pulling", not "no votes". */
+    rootFetched: boolean;
     joinError?: string;
 }
 const entries: DirEntry[] = allCriteria.map((criteria) => ({
@@ -53,7 +56,8 @@ const entries: DirEntry[] = allCriteria.map((criteria) => ({
     title: criteria.name.replace(/ directory \(test\)$/, ""),
     criteria,
     topic: "",
-    joined: false
+    joined: false,
+    rootFetched: false
 }));
 const byCode = new Map(entries.map((e) => [e.code, e]));
 const byTopic = new Map<string, DirEntry>(); // filled once topics are derived
@@ -215,7 +219,10 @@ function renderDirs() {
             leader.textContent = top.community.name ?? shortKey(top.community.publicKey);
             leader.title = top.community.publicKey;
         } else {
-            leader.textContent = entry.joinError ? "join failed" : entry.joined ? "no votes yet" : "syncing…";
+            // "no votes yet" is only claimed once this contest's checkpoint root has
+            // actually been read — an empty ranking before that just means the cold
+            // pull hasn't completed, which over 63 contests can take a while.
+            leader.textContent = entry.joinError ? "join failed" : entry.joined && entry.rootFetched ? "no votes yet" : "syncing…";
             leader.className = "muted";
             if (entry.joinError) leader.title = entry.joinError;
         }
@@ -824,12 +831,31 @@ async function main() {
     const fetchSvc = libp2p.services.fetch as {
         fetch(peer: unknown, key: string | Uint8Array, opts?: unknown): Promise<Uint8Array | undefined>;
     };
+    /* The tap is also where the site smooths the 63-contest cold-pull burst. Measured on
+     * the live site: the library's own per-peer budget (24 concurrent) opens more muxed
+     * streams than the browser connection digests — round-trips inflate from <1 s to
+     * 5-12 s, stall-and-flush, and every attempt that hits a 10 s default timeout
+     * (@libp2p/fetch's, then libp2p's stream-negotiation one) re-queues and compounds
+     * the congestion, leaving the overview on "no votes yet" for many minutes. Two
+     * countermeasures, both local to this wrapper: only a handful of fetches on the
+     * wire at once (queued ones haven't started any timeout yet), and a long explicit
+     * signal for each once it starts (the library passes none, so the 10 s default
+     * would apply). A node client needs neither — this is browser-connection behavior. */
+    const fetchWireLimit = pLimit(6);
     const realFetch = fetchSvc.fetch.bind(fetchSvc);
-    fetchSvc.fetch = async (peer, key, opts) => {
+    fetchSvc.fetch = async (peer, key, opts) =>
+        fetchWireLimit(async () => {
         const keyStr = typeof key === "string" ? key : new TextDecoder().decode(key);
         log(`checkpoint fetch → ${peer} ${keyStr}`);
+        if (!(opts as { signal?: AbortSignal } | undefined)?.signal)
+            opts = { ...(opts ?? {}), signal: AbortSignal.timeout(60_000) };
         try {
             const value = await realFetch(peer, key, opts);
+            const entry = byTopic.get(keyStr.replace(/\/root$/, ""));
+            if (entry && !entry.rootFetched) {
+                entry.rootFetched = true;
+                scheduleRenderDirs();
+            }
             log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
             const record = value === undefined ? undefined : parseRootRecord(value);
             for (const chunk of record?.chunks ?? []) checkpointChunks.set(chunk.toString(), chunk);
@@ -839,7 +865,7 @@ async function main() {
             log(`checkpoint fetch failed: ${(err as Error).message}`);
             throw err;
         }
-    };
+    });
 
     /* Catch-all bundle tap: every CRDT admission path (live accept, chase, local publish,
      * snapshot restore) writes the standalone bundle block through this put, and the
@@ -907,6 +933,23 @@ async function main() {
     $("withdraw-btn").onclick = () => {
         if (selected) void castVote(selected, []);
     };
+
+    /* Wait for the seeder to be VISIBLE AS A TOPIC SUBSCRIBER before joining, bounded:
+     * a contest that joins before the subscription exchange lands misses the direct
+     * cold-pull path and falls back to a 63-wide router race whose timeouts strand most
+     * boards until the next heartbeat (measured: join-first converges ~1/63 in 2.5 min;
+     * connect-first converges 63/63 in ~2 s — the same join-races-subscription lesson
+     * README "Diagnosing" documents for single contests). The seeder announces all 63
+     * subscriptions in one exchange, so seeing ONE topic is seeing them all. If no
+     * seeder shows within the deadline, join anyway — cold-start is best-effort and the
+     * armed re-pull + heartbeat converge it later. */
+    {
+        const deadline = Date.now() + 20_000;
+        const seederVisible = () => entries.some((e) => pubsub.getSubscribers(e.topic).length > 0);
+        while (!seederVisible() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
+        if (seederVisible()) markBench("seeder visible as topic subscriber (cold pulls can go direct)");
+        else log("no seeder subscriber visible after 20 s — joining anyway; tallies fill in as the connection lands");
+    }
 
     /* Join every directory contest (bounded concurrency). Each contest's `update` event
      * re-renders its overview row, and the selected directory's full panel when it's the
