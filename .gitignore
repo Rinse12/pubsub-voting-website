@@ -8,3 +8,6 @@ tes
 
 # Local Netlify folder
 .netlify
+
+# seed-vote wallet key (scripts/seed-candidate-votes.ts) — never commit
+.vote-seed-wallet.json

@@ -6,5 +6,5 @@
     "rootDir": ".",
     "sourceMap": false
   },
-  "include": ["scripts/cold-join-test.ts", "shared"]
+  "include": ["scripts/cold-join-test.ts", "scripts/seed-candidate-votes.ts", "shared"]
 }
