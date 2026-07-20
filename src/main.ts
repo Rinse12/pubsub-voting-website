@@ -68,6 +68,11 @@ interface DirEntry {
      * before this, an empty ranking means "still pulling", not "no votes". */
     rootFetched: boolean;
     joinError?: string;
+    /* ---- leaderboard-#1 community, loaded via pkc-js per contest (see syncLeaderCommunity) ---- */
+    leaderCommunity?: PkcCommunity; // the live pkc-js community for this contest's #1 board
+    leaderKey?: string; // guard: `${code}|${name}|${publicKey}` of the leader being loaded/shown
+    leaderLoaded?: boolean; // this contest's community has fired its first `update`
+    leaderStatus?: { text: string; cls?: "status-ok" | "status-pending" }; // last status, for re-render on select
 }
 const entries: DirEntry[] = allCriteria.map((criteria) => ({
     code: directoryCodeOf(criteria),
@@ -281,7 +286,8 @@ function select(code: string) {
     renderTally();
     renderMyVote();
     renderDirs();
-    void syncLeaderCommunity();
+    showSelectedCommunity(); // paint this directory's community from what it's already loaded
+    void syncLeaderCommunity(entry); // and (re)start its loader if the leader isn't loading yet
 }
 
 function renderMyVote() {
@@ -354,23 +360,55 @@ function renderTally() {
     });
 }
 
-/* ---------- leaderboard-#1 community of the SELECTED directory (loaded via pkc-js) ----------
+/* ---------- leaderboard-#1 community of EVERY directory (loaded via pkc-js) ----------
  * The boards being voted on ARE pkc communities — a board's publicKey is its community
- * address. Whenever the selected directory has a leaderboard (and whenever its leader
+ * address. As each of the 63 directories gains a leaderboard (and whenever its leader
  * changes), load the #1 board's community over the SAME shared helia node through pkc-js
- * (`createCommunity` + `community.update()`) and render what arrives. The community's
- * `update` event fires each time a (newer) community record lands; the first one is the
- * "loaded" moment the benchmarks panel reports. */
+ * (`createCommunity` + `community.update()`). Every contest keeps its own live community;
+ * the panel shows whichever directory is currently selected. The community's `update`
+ * event fires each time a (newer) community record lands; the first one is the "loaded"
+ * moment. The benchmarks panel reports the first community and, once every leaderboard's
+ * #1 is loaded, how long all of them took. */
 type PkcCommunity = Awaited<ReturnType<Pkc["getCommunity"]>>;
-let leaderCommunity: PkcCommunity | undefined;
-// Guard key = directory + name + publicKey: switching directories or a leader whose
-// winning bundle later gains a name (same key) reloads the community accordingly.
-let leaderKey: string | undefined;
+let firstCommunityLoaded = false; // first leader community across all contests has loaded
+let allCommunitiesBenchDone = false; // the "all communities loaded" benchmark has fired once
 
 function communityStatus(text: string, cls?: "status-ok" | "status-pending") {
     const el = $("community-status");
     el.textContent = text;
     el.className = cls ?? "";
+}
+
+// Record this contest's community status and, when it's the selected one, show it.
+function setLeaderStatus(entry: DirEntry, text: string, cls?: "status-ok" | "status-pending") {
+    entry.leaderStatus = { text, cls };
+    if (entry === selected) communityStatus(text, cls);
+}
+
+// Paint the community panel from the SELECTED contest's already-loaded state (called on
+// select, so switching directories shows that directory's community immediately without
+// waiting for its next `update` event).
+function showSelectedCommunity() {
+    const entry = selected;
+    if (!entry) return;
+    if (entry.leaderCommunity && entry.leaderLoaded) {
+        renderCommunity(entry.leaderCommunity);
+    } else {
+        $("community-info").hidden = true;
+        $("community-details").hidden = true;
+    }
+    communityStatus(entry.leaderStatus?.text ?? "", entry.leaderStatus?.cls);
+}
+
+// Once every leaderboard's #1 community has loaded at least once, mark how long all of
+// them took (from page start). Contests with no votes have no #1 to load, so they don't
+// block this; it needs at least one leaderboard and waits until every contest has joined.
+function maybeMarkAllCommunitiesLoaded() {
+    if (allCommunitiesBenchDone || !booted) return;
+    const withLeader = entries.filter((e) => (e.contest?.tally?.ranking.length ?? 0) > 0);
+    if (withLeader.length === 0 || !withLeader.every((e) => e.leaderLoaded)) return;
+    allCommunitiesBenchDone = true;
+    markBench(`all ${withLeader.length} leader communities loaded via pkc-js`);
 }
 
 function renderCommunity(community: PkcCommunity) {
@@ -389,13 +427,11 @@ function renderCommunity(community: PkcCommunity) {
     $("community-json").textContent = JSON.stringify(community.raw.communityIpfs ?? {}, null, 2);
 }
 
-async function syncLeaderCommunity() {
-    if (!selected) return;
-    const entry = selected;
+async function syncLeaderCommunity(entry: DirEntry) {
     const top = entry.contest?.tally?.ranking[0];
     const publicKey = top?.community.publicKey;
     if (!publicKey) {
-        communityStatus(`waiting for the first board on the /${entry.code}/ leaderboard…`);
+        setLeaderStatus(entry, `waiting for the first board on the /${entry.code}/ leaderboard…`);
         return;
     }
     // Hand pkc-js BOTH identity halves the winning bundle carries: the canonical
@@ -403,53 +439,59 @@ async function syncLeaderCommunity() {
     // (pkc-js resolves and verifies it — `nameResolved` — and uses it as the address).
     const name = top.community.name;
     const key = `${entry.code}|${name ?? ""}|${publicKey}`;
-    if (key === leaderKey) return; // already loading/showing this leader
-    leaderKey = key;
+    if (key === entry.leaderKey) return; // already loading/showing this leader
+    entry.leaderKey = key;
+    entry.leaderLoaded = false;
     const label = name ?? shortKey(publicKey);
 
-    // A dethroned (or deselected) leader's community stops syncing — one community
-    // updating at a time.
-    const previous = leaderCommunity;
-    leaderCommunity = undefined;
-    $("community-info").hidden = true;
-    $("community-details").hidden = true;
+    // A dethroned leader's community stops syncing — one community per contest at a time.
+    const previous = entry.leaderCommunity;
+    entry.leaderCommunity = undefined;
+    if (entry === selected) {
+        $("community-info").hidden = true;
+        $("community-details").hidden = true;
+    }
     if (previous) void previous.stop().catch((err: Error) => log(`stopping previous community failed: ${err.message}`));
 
     const startedAt = performance.now();
-    communityStatus(`loading community ${label} (/${entry.code}/ leaderboard #1) via pkc-js…`, "status-pending");
+    setLeaderStatus(entry, `loading community ${label} (/${entry.code}/ leaderboard #1) via pkc-js…`, "status-pending");
     log(`/${entry.code}/ leaderboard #1 is ${label} — loading its community via pkc-js createCommunity + update()`);
     try {
         const community = (await pkc.createCommunity(name ? { name, publicKey } : { publicKey })) as PkcCommunity;
-        if (leaderKey !== key) return; // leader/selection changed while constructing
-        leaderCommunity = community;
-        let loaded = false;
+        if (entry.leaderKey !== key) return; // leader changed while constructing
+        entry.leaderCommunity = community;
         community.on("update", () => {
-            if (leaderKey !== key) return;
-            if (!loaded) {
-                loaded = true;
-                markBench(`community ${label} loaded via pkc-js (from /${entry.code}/ leaderboard ready)`, startedAt);
+            if (entry.leaderKey !== key) return;
+            if (!entry.leaderLoaded) {
+                entry.leaderLoaded = true;
+                if (!firstCommunityLoaded) {
+                    firstCommunityLoaded = true;
+                    markBench(`first leader community loaded via pkc-js (/${entry.code}/ ${label})`, startedAt);
+                }
+                maybeMarkAllCommunitiesLoaded();
             }
-            communityStatus(`community ${label} loaded — live-updating`, "status-ok");
+            setLeaderStatus(entry, `community ${label} loaded — live-updating`, "status-ok");
             log(`community update: ${community.address} (title ${JSON.stringify(community.title ?? null)}, record updatedAt ${community.updatedAt})`);
-            renderCommunity(community);
+            if (entry === selected) renderCommunity(community);
         });
         community.on("updatingstatechange", (state) => {
-            if (leaderKey !== key) return;
+            if (entry.leaderKey !== key) return;
             log(`community ${label} updating state: ${state}`);
-            if (!loaded && state !== "succeeded")
-                communityStatus(
+            if (!entry.leaderLoaded && state !== "succeeded")
+                setLeaderStatus(
+                    entry,
                     `loading community ${label} via pkc-js… (${state}${state === "failed" ? " — a board that isn't a real community never resolves; retrying anyway" : ""})`,
                     "status-pending"
                 );
         });
         community.on("error", (err: Error) => {
-            if (leaderKey !== key) return;
+            if (entry.leaderKey !== key) return;
             log(`community ${label} error: ${err.message}`);
         });
         await community.update(); // starts the update loop; the `update` event does the rendering
     } catch (err) {
-        if (leaderKey === key) {
-            communityStatus(`loading community ${label} failed: ${(err as Error).message}`);
+        if (entry.leaderKey === key) {
+            setLeaderStatus(entry, `loading community ${label} failed: ${(err as Error).message}`);
             log(`community ${label} load failed: ${(err as Error).message}`);
         }
     }
@@ -923,13 +965,11 @@ async function main() {
                             markBench(`first votes on a leaderboard (/${entry.code}/, ${ranking.length} board(s))`);
                         }
                         scheduleRenderDirs();
-                        if (entry === selected) {
-                            renderTally();
-                            // The moment the selected leaderboard has content, its #1 board's
-                            // community loads — and if a later vote flips the leader, the
-                            // shown community follows it.
-                            void syncLeaderCommunity();
-                        }
+                        if (entry === selected) renderTally();
+                        // The moment ANY leaderboard has content, its #1 board's community
+                        // loads via pkc-js — every contest, not just the selected one — and if
+                        // a later vote flips a leader, that contest's community follows it.
+                        void syncLeaderCommunity(entry);
                         // The chase that fired this update stored any checkpoint blocks it pulled.
                         void refreshCheckpointBundles(helia.blockstore);
                     });
@@ -967,9 +1007,14 @@ async function main() {
     markBench(`all ${entries.length} contests joined (topics joined + persisted votes restored)`);
     log(`joined all ${entries.length} directory contest topics; syncing votes…`);
     renderBundles();
+    // Every contest has joined and restored its snapshot: kick off each leaderboard's #1
+    // community (those whose update already fired are no-ops) and re-check the "all loaded"
+    // benchmark now that `booted` is true.
+    for (const entry of entries) void syncLeaderCommunity(entry);
+    maybeMarkAllCommunitiesLoaded();
     if (selected) {
         renderTally();
-        void syncLeaderCommunity();
+        showSelectedCommunity();
     }
 }
 
