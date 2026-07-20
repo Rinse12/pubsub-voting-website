@@ -4,12 +4,29 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>5chan directory votes</title>
+        <script>
+            // set the theme before first paint to avoid a flash of the wrong theme
+            try {
+                const saved = localStorage.getItem("bso-vote:theme");
+                document.documentElement.dataset.theme =
+                    saved === "light" || saved === "dark"
+                        ? saved
+                        : matchMedia("(prefers-color-scheme: light)").matches
+                          ? "light"
+                          : "dark";
+            } catch {
+                document.documentElement.dataset.theme = "dark";
+            }
+        </script>
         <link rel="stylesheet" href="/src/style.css" />
     </head>
     <body>
         <main>
             <header>
-                <h1>5chan directory votes</h1>
+                <div class="header-row">
+                    <h1>5chan directory votes</h1>
+                    <button id="theme-btn" class="small" type="button" title="Toggle light/dark theme">🌙</button>
+                </div>
                 <p class="sub">
                     Which board should host each 5chan directory — <code>/g/</code>, <code>/a/</code>,
                     <code>/b/</code>…? One trustless contest per directory over libp2p pubsub.
