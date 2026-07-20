@@ -23,7 +23,6 @@ import {
     type DownloadedBundle
 } from "../shared/wire-log.js";
 import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
-import { fetchCandidates, fetchDirectoryMeta, type Candidate, type DirectoryMeta } from "./lists.js";
 import type { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
 
@@ -83,7 +82,6 @@ const byCode = new Map(entries.map((e) => [e.code, e]));
 const byTopic = new Map<string, DirEntry>(); // filled once topics are derived
 
 let selected: DirEntry | undefined;
-let directoryMeta: Record<string, DirectoryMeta> = {};
 
 /* ---------- my-vote persistence (per contest topic + wallet) ---------- */
 interface StoredVote {
@@ -280,18 +278,10 @@ function select(code: string) {
         `Boards competing to host /${entry.code}/ on 5chan. The highest-scoring board resolves the ` +
         `directory code; if it goes offline, 5chan rotates to the next-highest.`;
     $("dir-topic").textContent = entry.topic || "(deriving…)";
-    renderDirRules(entry);
     renderTally();
     renderMyVote();
     renderDirs();
-    void renderCandidates(entry);
     void syncLeaderCommunity();
-}
-
-function renderDirRules(entry: DirEntry) {
-    const meta = directoryMeta[entry.code];
-    $("dir-rules-details").hidden = !meta;
-    if (meta) $("dir-rules").textContent = JSON.stringify({ rules: meta.rules ?? [], features: meta.features ?? {} }, null, 2);
 }
 
 function renderMyVote() {
@@ -315,7 +305,7 @@ function renderTally() {
     $("tally-hint").hidden = ranking.length > 0;
     if (ranking.length === 0) {
         $("tally-hint").textContent = selected.joined
-            ? "No votes yet — be the first: vote for a candidate below or submit a new board."
+            ? "No votes yet — be the first: vote for a board by its public key below."
             : "Syncing this contest…";
         $("tally-table").hidden = true;
         return;
@@ -362,63 +352,6 @@ function renderTally() {
         tr.appendChild(actions);
         body.appendChild(tr);
     });
-}
-
-/* ---------- registered candidate boards (from the lists repo, fetched live) ---------- */
-const candidatesCache = new Map<string, Candidate[]>();
-
-async function renderCandidates(entry: DirEntry) {
-    const statusEl = $("candidates-status");
-    const table = $("candidates-table");
-    let candidates = candidatesCache.get(entry.code);
-    if (!candidates) {
-        statusEl.textContent = "loading the registered candidates from GitHub…";
-        table.hidden = true;
-        try {
-            candidates = await fetchCandidates(entry.code);
-            candidatesCache.set(entry.code, candidates);
-        } catch (err) {
-            if (selected === entry) statusEl.textContent = `candidate list unavailable (${(err as Error).message}) — you can still vote by public key below`;
-            return;
-        }
-    }
-    if (selected !== entry) return; // selection changed while fetching
-    if (candidates.length === 0) {
-        statusEl.textContent = `no boards registered for /${entry.code}/ yet — open a PR on the lists repo, or vote for any board by public key below`;
-        table.hidden = true;
-        return;
-    }
-    statusEl.textContent = "";
-    statusEl.hidden = true;
-    table.hidden = false;
-    const body = $("candidates-body");
-    body.textContent = "";
-    for (const candidate of candidates) {
-        const named = candidate.address !== candidate.publicKey;
-        const tr = document.createElement("tr");
-        const board = document.createElement("td");
-        board.textContent = named ? `${candidate.address} (${shortKey(candidate.publicKey)})` : shortKey(candidate.publicKey);
-        board.title = candidate.publicKey;
-        const owner = document.createElement("td");
-        owner.textContent = candidate.owner ?? "—";
-        const added = document.createElement("td");
-        added.textContent = candidate.addedAt ? new Date(candidate.addedAt * 1000).toLocaleDateString() : "—";
-        const actions = document.createElement("td");
-        const btn = document.createElement("button");
-        btn.className = "small";
-        btn.textContent = "Vote";
-        btn.title = `Vote for ${candidate.publicKey}`;
-        btn.onclick = () =>
-            void castVote(entry, [
-                {
-                    community: named ? { publicKey: candidate.publicKey, name: candidate.address } : { publicKey: candidate.publicKey },
-                    vote: 1
-                }
-            ]);
-        actions.appendChild(btn);
-        tr.append(board, owner, added, actions);
-        body.appendChild(tr);
-    }
 }
 
 /* ---------- leaderboard-#1 community of the SELECTED directory (loaded via pkc-js) ----------
@@ -750,16 +683,6 @@ async function main() {
     }
     log(`${entries.length} directory contest topics derived`);
     renderDirs();
-
-    // Directory display metadata (titles are already in the criteria; this adds each
-    // directory's expected rules/features panel). Best-effort, never blocks anything.
-    void fetchDirectoryMeta().then(
-        (meta) => {
-            directoryMeta = meta;
-            if (selected) renderDirRules(selected);
-        },
-        (err: Error) => log(`directory metadata fetch failed (rules panel unavailable): ${err.message}`)
-    );
 
     /* Wallet buttons + restore, before the network sync below: none of this needs the
      * voter, and a returning visitor should see their identity without waiting or clicking.

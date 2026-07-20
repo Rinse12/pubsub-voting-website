@@ -16,9 +16,11 @@ bucket block before counting the vote, so an ineligible wallet's ballot is dropp
 the whole network, not by a moderator. Visitors without an extension wallet can have the
 page **generate a burner wallet in the browser** (key persisted in localStorage) and ask
 the Pass owner to airdrop to it. Voters pick a directory, then vote for a board on its
-live tally, one of the **registered candidate boards** (fetched live from the lists
-repo, where anyone can PR their board in), or a new board (a `12D3KooW…` public key,
-optionally a verified `.bso` name).
+live tally or for any board by key (a `12D3KooW…` public key, optionally a verified
+`.bso` name). **Every board the site shows comes from the vote tally itself** — the
+site never reads the lists repo at runtime; only the one-time seed script
+(`scripts/seed-candidate-votes.ts`) reads it, to cast a real signed vote for each
+directory's first-registered board.
 
 Built on [`@bitsocial/pubsub-voting`](https://github.com/bitsocialnet/pubsub-voting):
 votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic derived
@@ -91,8 +93,8 @@ shared/    directory-manifest.{json,ts} (GENERATED — defines all 63 contests A
            contests.ts (derives the criteria), viem chain factory, .bso name
            resolvers, wire-log decoders
 src/       the website: pkc-js boot (the one shared Helia node), injected+burner
-           wallet signer, directory overview + per-directory voting UI, lists-repo
-           candidate fetching, leader-community loader, benchmarks panel
+           wallet signer, directory overview + per-directory voting UI,
+           leader-community loader, benchmarks panel
 scripts/   generate-directory-manifest.ts — regenerate the manifest from the lists
            repo (npm run manifest); derive-topic.ts — validate every contest +
            print all topics (npm run topic)
