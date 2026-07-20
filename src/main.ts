@@ -72,6 +72,7 @@ interface DirEntry {
     leaderCommunity?: PkcCommunity; // the live pkc-js community for this contest's #1 board
     leaderKey?: string; // guard: `${code}|${name}|${publicKey}` of the leader being loaded/shown
     leaderLoaded?: boolean; // this contest's community has fired its first `update`
+    leaderEverLoaded?: boolean; // has loaded at least once ever (survives leader flips; for count benchmarks)
     leaderStatus?: { text: string; cls?: "status-ok" | "status-pending" }; // last status, for re-render on select
 }
 const entries: DirEntry[] = allCriteria.map((criteria) => ({
@@ -372,6 +373,19 @@ function renderTally() {
 type PkcCommunity = Awaited<ReturnType<Pkc["getCommunity"]>>;
 let firstCommunityLoaded = false; // first leader community across all contests has loaded
 let allCommunitiesBenchDone = false; // the "all communities loaded" benchmark has fired once
+// Count of distinct contests whose #1 community has loaded at least once, and the
+// milestones (from page start) benchmarked as that count climbs.
+let communitiesLoadedCount = 0;
+const COMMUNITY_COUNT_MILESTONES = [6];
+const countMilestonesDone = new Set<number>();
+function maybeMarkCommunityCount() {
+    for (const n of COMMUNITY_COUNT_MILESTONES) {
+        if (communitiesLoadedCount >= n && !countMilestonesDone.has(n)) {
+            countMilestonesDone.add(n);
+            markBench(`${n} leader communities loaded via pkc-js`);
+        }
+    }
+}
 
 function communityStatus(text: string, cls?: "status-ok" | "status-pending") {
     const el = $("community-status");
@@ -467,6 +481,11 @@ async function syncLeaderCommunity(entry: DirEntry) {
                 if (!firstCommunityLoaded) {
                     firstCommunityLoaded = true;
                     markBench(`first leader community loaded via pkc-js (/${entry.code}/ ${label})`, startedAt);
+                }
+                if (!entry.leaderEverLoaded) {
+                    entry.leaderEverLoaded = true; // count each contest once, even if its leader later flips
+                    communitiesLoadedCount++;
+                    maybeMarkCommunityCount();
                 }
                 maybeMarkAllCommunitiesLoaded();
             }
