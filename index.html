@@ -96,8 +96,8 @@
             <section class="card" id="dirs-card">
                 <h2>Directories</h2>
                 <p class="hint">
-                    All directory contests, syncing live. Pick a directory to see its full leaderboard,
-                    the registered candidate boards, and to vote.
+                    All directory contests, syncing live. Pick a directory to see its full leaderboard
+                    and to vote. Every board shown comes from the vote tally itself — nothing else.
                 </p>
                 <div class="scroll-y">
                     <table id="dirs-table">
@@ -122,17 +122,13 @@
             <section class="card" id="dir-card" hidden>
                 <h2 id="dir-title">—</h2>
                 <p class="hint" id="dir-blurb"></p>
-                <details id="dir-rules-details" hidden>
-                    <summary>Expected directory rules &amp; UX defaults (from the 5chan lists registry)</summary>
-                    <pre id="dir-rules"></pre>
-                </details>
                 <dl class="kv">
                     <dt>Topic</dt>
                     <dd><code id="dir-topic" class="wrap">—</code></dd>
                 </dl>
 
                 <h3>Leaderboard</h3>
-                <p class="hint" id="tally-hint">No votes yet — be the first: vote for a candidate below or submit a new board.</p>
+                <p class="hint" id="tally-hint">No votes yet — be the first: vote for a board by its public key below.</p>
                 <table id="tally-table" hidden>
                     <thead>
                         <tr><th>#</th><th>Board</th><th>Votes</th><th>Status</th><th></th></tr>
@@ -140,22 +136,7 @@
                     <tbody id="tally-body"></tbody>
                 </table>
 
-                <h3>Registered candidate boards</h3>
-                <p class="hint">
-                    Boards registered for this directory in the public
-                    <a href="https://github.com/bitsocialnet/lists/tree/master/5chan-directories" target="_blank" rel="noreferrer">5chan lists registry</a>
-                    (anyone can PR their board in) — fetched live from GitHub. Voting for one signs a ballot for
-                    its public key.
-                </p>
-                <p class="hint" id="candidates-status">—</p>
-                <table id="candidates-table" hidden>
-                    <thead>
-                        <tr><th>Board</th><th>Owner</th><th>Registered</th><th></th></tr>
-                    </thead>
-                    <tbody id="candidates-body"></tbody>
-                </table>
-
-                <h3>Vote for a new board</h3>
+                <h3>Vote for a board</h3>
                 <form id="new-board-form">
                     <label>
                         Board public key <span class="req">(required)</span>
