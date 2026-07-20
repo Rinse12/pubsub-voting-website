@@ -37,6 +37,26 @@ function log(message: string) {
 }
 const shortKey = (key: string) => (key.length > 20 ? `${key.slice(0, 10)}…${key.slice(-6)}` : key);
 
+/* ---------- light/dark theme toggle (initial theme is set by an inline script in index.html) ---------- */
+const THEME_KEY = "bso-vote:theme";
+const themeBtn = $<HTMLButtonElement>("theme-btn");
+function renderThemeBtn() {
+    const light = document.documentElement.dataset.theme === "light";
+    themeBtn.textContent = light ? "🌙" : "☀️";
+    themeBtn.title = light ? "Switch to dark theme" : "Switch to light theme";
+}
+themeBtn.onclick = () => {
+    const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    try {
+        localStorage.setItem(THEME_KEY, next);
+    } catch {
+        // theme still applies for this page view; it just won't persist
+    }
+    renderThemeBtn();
+};
+renderThemeBtn();
+
 /* ---------- the 63 directory contests ---------- */
 interface DirEntry {
     code: string; // e.g. "g"
