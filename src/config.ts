@@ -19,35 +19,31 @@ export const HTTP_ROUTER_URLS: string[] = [
 ];
 
 /**
- * EXPERIMENT (pre-warm): peers to dial at boot, in parallel with the votes-seeder dial,
- * purely so the connection is already open when a leaderboard resolves.
+ * Pre-warm (discovery-driven, `?prewarm=0` to disable): the fetch-protocol key a connected
+ * votes seeder answers with its co-located Kubo peer's browser-dialable multiaddrs.
  *
  * Measured motivation: the browser dials 89.36.231.48 TWICE — once at ~1.3 s for votes
- * (the seeder's Helia node, port 6743) and again at ~4.6 s for community content (the
- * daemon's Kubo node, port 4001). Those are two peer ids and two TLS/WS handshakes to one
- * machine, because bitsocial-seeder cannot merge them: votes gossipsub needs
- * validate-before-forward topic validators and a `@libp2p/fetch` responder, neither of
- * which Kubo's RPC can register (see bitsocial-seeder lib/votes/node.ts). The second dial
- * lands ~1.2 s AFTER the community load begins, so roughly half of that load is spent
- * discovering and dialing a host the tab was already talking to.
+ * (the seeder's Helia node) and again at ~4.6 s for community content (the daemon's Kubo
+ * node). Two peer ids, two TLS/WS handshakes, one machine — bitsocial-seeder cannot merge
+ * the nodes (votes gossipsub needs topic validators and a `@libp2p/fetch` responder that
+ * Kubo's RPC cannot register), and the second dial lands ~1.2 s AFTER the community load
+ * begins, so roughly half of that load was discovery+dial to a host the tab was already
+ * talking to.
  *
- * This tests whether an already-open connection recovers that time — i.e. whether merging
- * the two nodes would be worth its (large) cost — without merging anything. Hardcoded on
- * purpose: it is an experiment, not the discovery path. Everything else in this app still
- * finds seeders through the routers.
+ * A hardcoded-multiaddr version of this rotted within a day (the Kubo peer id was
+ * regenerated, and the /dns4 libp2p.direct label derives from the key — every pre-warm
+ * silently dialed a dead peer). This version asks the seeder itself over the connection
+ * discovery already opened, so the addrs are read live from Kubo and cannot rot. The
+ * answer is a dial HINT with the peer id embedded — a dial either authenticates that key
+ * or fails, exactly as with router-served addrs, so it adds no trust surface.
  */
-export const PREWARM_PEER_ADDRS: string[] = [
-    // The daemon's Kubo node on the production seeder host (port 4001), browser-dialable via its
-    // AutoTLS libp2p.direct address.
-    //
-    // KNOWN TO ROT, and it already has: this node's peer id changed on 2026-07-21 (was
-    // 12D3KooWLNoZZe8n…, and the /dns4 label changed with it, since that label is derived from the
-    // key). Every pre-warm between the change and this edit dialed a peer that no longer existed —
-    // silently, because the dial is fire-and-forget and normal discovery still runs underneath, so
-    // the only symptom was quietly losing the ~0.9 s the pre-warm exists to buy. That is the whole
-    // argument for making this discovery-driven before it ships anywhere.
-    "/dns4/89-36-231-48.k51qzi5uqu5dh7t6qna0btkj3a89cip7aiuoz8qwgvvb7blzn2g0jaswuyiyq4.libp2p.direct/tcp/4001/tls/ws/p2p/12D3KooWCcJKbrF4hdBa9n9YmqgHJajRHC1GtLQNMkMPNSMagwUo"
-];
+export const PREWARM_HINT_FETCH_KEY = "bitsocial-seeder/peers";
+/** Give up asking a peer for the hint after this long (it simply doesn't serve the key). */
+export const PREWARM_HINT_TIMEOUT_MS = 5_000;
+/** Ask at most this many distinct peers for the hint (only the seeder answers it). */
+export const PREWARM_HINT_MAX_PEERS = 8;
+/** Dial at most this many hinted addrs (a hint is bounded like any untrusted input). */
+export const PREWARM_HINT_MAX_ADDRS = 3;
 
 /** How often the browser re-runs discovery + dial while it has no seeder connection (ms). */
 export const REDIAL_INTERVAL_MS = 5_000;

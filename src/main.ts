@@ -23,7 +23,7 @@ import {
     type DownloadedBundle
 } from "../shared/wire-log.js";
 import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
-import { PREWARM_PEER_ADDRS } from "./config.js";
+import { PREWARM_HINT_FETCH_KEY, PREWARM_HINT_TIMEOUT_MS, PREWARM_HINT_MAX_PEERS, PREWARM_HINT_MAX_ADDRS } from "./config.js";
 import { multiaddr } from "@multiformats/multiaddr";
 import type { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
@@ -754,7 +754,7 @@ const knob = (name: string, fallback: number) => {
     const value = Number(raw);
     return Number.isFinite(value) && value > 0 ? value : Infinity;
 };
-/** EXPERIMENT: pre-warm the community-serving peers at boot (see PREWARM_PEER_ADDRS). */
+/** Pre-warm the community-serving Kubo peer via the seeder-served hint (see config.ts). */
 const PREWARM = new URLSearchParams(location.search).get("prewarm") !== "0";
 const FETCH_WIRE_LIMIT = knob("fetchLimit", Infinity);
 const JOIN_LIMIT = knob("joinLimit", Infinity);
@@ -796,26 +796,55 @@ async function main() {
     pkc = pkcInstance;
     markBench("pkc-js ready (in-browser helia/libp2p node booted)");
 
-    /* EXPERIMENT (?prewarm=0 to disable): open the community-serving peers' connections NOW,
-     * concurrently with everything below, instead of paying for them at t+3.4 s when the first
-     * leaderboard resolves and pkc-js starts discovering. See PREWARM_PEER_ADDRS for the
-     * measurement that motivates it. Fire-and-forget by design — a failed pre-warm must cost
-     * nothing, since the normal discovery path still runs underneath. */
+    /* Pre-warm, discovery-driven (?prewarm=0 to disable): the first peers discovery connects us
+     * to are votes seeders — and the production seeder serves community content from a Kubo node
+     * on the SAME machine under a DIFFERENT peer id, which pkc-js would otherwise only discover
+     * at t+~5 s when the first leaderboard resolves. Ask each newly connected peer for the
+     * PREWARM_HINT_FETCH_KEY (only the seeder answers it) and dial the returned Kubo addrs NOW,
+     * while the votes cold pull is still running. Fire-and-forget at every step — a peer without
+     * the key, a garbage answer, or a failed dial costs nothing; normal discovery still runs
+     * underneath. See config.ts for why the hardcoded-multiaddr version of this was abandoned. */
     if (PREWARM) {
-        for (const addr of PREWARM_PEER_ADDRS) {
-            const startedAt = performance.now();
-            phase("prewarm-start", addr);
-            void helia.libp2p
-                .dial(multiaddr(addr))
-                .then(() => {
-                    phase("prewarm-connected", addr, { tookMs: performance.now() - startedAt });
-                    log(`pre-warm connected in ${fmtSeconds(performance.now() - startedAt)}: ${addr}`);
+        const fetchService = helia.libp2p.services.fetch as {
+            fetch(peer: unknown, key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined | null>;
+        };
+        let hintPeersTried = 0;
+        let hintAnswered = false;
+        const tryHint = (peer: unknown): void => {
+            if (hintAnswered || hintPeersTried >= PREWARM_HINT_MAX_PEERS) return;
+            hintPeersTried += 1;
+            void fetchService
+                .fetch(peer, PREWARM_HINT_FETCH_KEY, { signal: AbortSignal.timeout(PREWARM_HINT_TIMEOUT_MS) })
+                .then((answer) => {
+                    if (hintAnswered || answer === undefined || answer === null) return;
+                    const parsed = JSON.parse(new TextDecoder().decode(answer)) as { kubo?: unknown };
+                    const addrs = (Array.isArray(parsed.kubo) ? parsed.kubo : [])
+                        .filter((a): a is string => typeof a === "string")
+                        .slice(0, PREWARM_HINT_MAX_ADDRS);
+                    if (addrs.length === 0) return;
+                    hintAnswered = true;
+                    phase("prewarm-hint", `${addrs.length} addr(s) from ${String(peer)}`);
+                    for (const addr of addrs) {
+                        const startedAt = performance.now();
+                        phase("prewarm-start", addr);
+                        void helia.libp2p
+                            .dial(multiaddr(addr))
+                            .then(() => {
+                                phase("prewarm-connected", addr, { tookMs: performance.now() - startedAt });
+                                log(`pre-warm connected in ${fmtSeconds(performance.now() - startedAt)}: ${addr}`);
+                            })
+                            .catch((err: Error) => {
+                                phase("prewarm-failed", addr, { tookMs: performance.now() - startedAt, error: err.message });
+                                log(`pre-warm dial failed (harmless, discovery still runs): ${err.message}`);
+                            });
+                    }
                 })
-                .catch((err: Error) => {
-                    phase("prewarm-failed", addr, { tookMs: performance.now() - startedAt, error: err.message });
-                    log(`pre-warm dial failed (harmless, discovery still runs): ${err.message}`);
+                .catch(() => {
+                    // Peer doesn't serve the key (or timed out) — the next connection gets asked.
                 });
-        }
+        };
+        helia.libp2p.addEventListener("connection:open", (evt: CustomEvent<{ remotePeer: unknown }>) => tryHint(evt.detail.remotePeer));
+        for (const connection of helia.libp2p.getConnections()) tryHint(connection.remotePeer);
     }
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
