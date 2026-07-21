@@ -23,6 +23,8 @@ import {
     type DownloadedBundle
 } from "../shared/wire-log.js";
 import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
+import { PREWARM_PEER_ADDRS } from "./config.js";
+import { multiaddr } from "@multiformats/multiaddr";
 import type { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
 
@@ -68,6 +70,8 @@ interface DirEntry {
      * before this, an empty ranking means "still pulling", not "no votes". */
     rootFetched: boolean;
     joinError?: string;
+    /** performance.now() of this contest's first non-empty ranking (benchmark attribution). */
+    firstTallyAt?: number;
     /* ---- leaderboard-#1 community, loaded via pkc-js per contest (see syncLeaderCommunity) ---- */
     leaderCommunity?: PkcCommunity; // the live pkc-js community for this contest's #1 board
     leaderKey?: string; // guard: `${code}|${name}|${publicKey}` of the leader being loaded/shown
@@ -141,7 +145,29 @@ function markBench(label: string, sinceMs = t0) {
     benchRows.push({ label, tookMs: now - sinceMs, doneAtMs: now - t0 });
     renderBench();
     log(`benchmark: ${label} — ${fmtSeconds(now - sinceMs)}`);
+    phase("bench", label, { tookMs: now - sinceMs });
 }
+
+/* ---------- machine-readable phase timeline (for scripts/coldstart-bench.mjs) ----------
+ * The UI table above answers "how does this feel"; this answers "which step ate the
+ * seconds". Every interesting edge on the cold-start path pushes one event here with its
+ * t+ offset, so a Playwright driver can read `window.__phases` and attribute wall-clock to
+ * a phase (seeder dial vs root fetch vs bitswap chase vs pkc-js community load) instead of
+ * inferring it from the five coarse rows the panel shows. Pure instrumentation: nothing
+ * reads these back, and `kind` is the grouping key the driver aggregates on. */
+export type PhaseEvent = { kind: string; label: string; atMs: number; [extra: string]: unknown };
+const phases: PhaseEvent[] = [];
+function phase(kind: string, label: string, extra: Record<string, unknown> = {}) {
+    phases.push({ kind, label, atMs: performance.now() - t0, ...extra });
+}
+declare global {
+    interface Window {
+        __phases: PhaseEvent[];
+        __bench: { label: string; tookMs: number; doneAtMs: number }[];
+    }
+}
+window.__phases = phases;
+window.__bench = benchRows;
 
 /* ---------- downloaded vote bundles (debug panel) ----------
  * Every signed bundle this tab has admitted, by CID, across ALL contests, tagged with how
@@ -468,16 +494,23 @@ async function syncLeaderCommunity(entry: DirEntry) {
     if (previous) void previous.stop().catch((err: Error) => log(`stopping previous community failed: ${err.message}`));
 
     const startedAt = performance.now();
+    // Split the community load into its three observable segments: createCommunity (which
+    // includes .bso name resolution), update() returning (it only starts the loop), and the
+    // first `update` event (the actual network round-trip). Reported separately because they
+    // have completely different fixes.
+    phase("community-create-start", entry.code, { label, named: Boolean(name) });
     setLeaderStatus(entry, `loading community ${label} (/${entry.code}/ leaderboard #1) via pkc-js…`, "status-pending");
     log(`/${entry.code}/ leaderboard #1 is ${label} — loading its community via pkc-js createCommunity + update()`);
     try {
         const community = (await pkc.createCommunity(name ? { name, publicKey } : { publicKey })) as PkcCommunity;
+        phase("community-created", entry.code, { tookMs: performance.now() - startedAt, label });
         if (entry.leaderKey !== key) return; // leader changed while constructing
         entry.leaderCommunity = community;
         community.on("update", () => {
             if (entry.leaderKey !== key) return;
             if (!entry.leaderLoaded) {
                 entry.leaderLoaded = true;
+                phase("community-loaded", entry.code, { tookMs: performance.now() - startedAt, label });
                 if (!firstCommunityLoaded) {
                     firstCommunityLoaded = true;
                     markBench(`first leader community loaded via pkc-js (/${entry.code}/ ${label})`, startedAt);
@@ -495,6 +528,7 @@ async function syncLeaderCommunity(entry: DirEntry) {
         });
         community.on("updatingstatechange", (state) => {
             if (entry.leaderKey !== key) return;
+            phase("community-state", entry.code, { state, atSinceStartMs: performance.now() - startedAt, label });
             log(`community ${label} updating state: ${state}`);
             if (!entry.leaderLoaded && state !== "succeeded")
                 setLeaderStatus(
@@ -690,6 +724,50 @@ async function castVote(entry: DirEntry, votes: Vote[]) {
     }
 }
 
+/* ---------- cold-start tuning knobs ----------
+ * Overridable from the query string so the benchmark driver can A/B without a rebuild;
+ * 0 (or anything non-finite) means "no limit". `?fetchLimit=6&joinLimit=8&waitSeeder=20000`
+ * restores the pre-2026-07-20 shipped values.
+ *
+ * All three now default to OFF, against commit da35976's caps, because
+ * scripts/coldstart-bench.mjs measured them costing more than they saved (n=3 medians,
+ * real Chromium, cold context, 6 leader communities):
+ *
+ *     baseline (6/8/20s)  10.41s total, first community 4.64s
+ *     fetchLimit off       7.74s total, first community 2.47s
+ *     all off              6.87s total, first community 2.42s
+ *
+ * The fetch cap was the expensive one, and NOT for the reason it was added: the wrapper it
+ * installs sits on `libp2p.services.fetch`, which pkc-js also uses for its IPNS direct
+ * fetch — and pkc-js starts its own 5 s AbortSignal BEFORE the call enters this queue, so
+ * queue wait (median 1.22 s, max 2.79 s, against 0.40 s of actual wire time) came straight
+ * out of the community-load timeout budget. Vote root fetches were never the victim: they
+ * are 63/63 successful in every configuration measured, capped or not.
+ *
+ * What the caps DID buy is real but smaller: uncapped, the 63 separate `<topic>/root`
+ * fetches contend on one connection and the cold pull slows 2.3 s -> 4.2 s. The fix for
+ * that is to stop making 63 round-trips (one aggregate root-record fetch), not to
+ * rate-limit them — see README. */
+const knob = (name: string, fallback: number) => {
+    const raw = new URLSearchParams(location.search).get(name);
+    if (raw === null) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : Infinity;
+};
+/** EXPERIMENT: pre-warm the community-serving peers at boot (see PREWARM_PEER_ADDRS). */
+const PREWARM = new URLSearchParams(location.search).get("prewarm") !== "0";
+const FETCH_WIRE_LIMIT = knob("fetchLimit", Infinity);
+const JOIN_LIMIT = knob("joinLimit", Infinity);
+/** ms to wait for the seeder's subscription gossip before joining anyway; 0 = don't wait.
+ * Off by default: the library's cold start does not need the subscription exchange — its
+ * `#discoverProviders` dials a provider from the routers and fetches the root record
+ * directly (pubsub-voting DESIGN.md:218). The gate was working around the 63-way router
+ * stampede, which is the same fan-out the aggregate root fetch removes. */
+const WAIT_SEEDER_MS = (() => {
+    const raw = new URLSearchParams(location.search).get("waitSeeder");
+    return raw === null ? 0 : Math.max(0, Number(raw) || 0);
+})();
+
 /* ---------- boot ---------- */
 /** Minimal promise-concurrency limiter: joining 63 contests at once would stampede the
  * seeder's checkpoint fetch and the RPCs; a handful in flight keeps boot smooth. */
@@ -717,6 +795,28 @@ async function main() {
     const { pkc: pkcInstance, helia } = await startPkcNode();
     pkc = pkcInstance;
     markBench("pkc-js ready (in-browser helia/libp2p node booted)");
+
+    /* EXPERIMENT (?prewarm=0 to disable): open the community-serving peers' connections NOW,
+     * concurrently with everything below, instead of paying for them at t+3.4 s when the first
+     * leaderboard resolves and pkc-js starts discovering. See PREWARM_PEER_ADDRS for the
+     * measurement that motivates it. Fire-and-forget by design — a failed pre-warm must cost
+     * nothing, since the normal discovery path still runs underneath. */
+    if (PREWARM) {
+        for (const addr of PREWARM_PEER_ADDRS) {
+            const startedAt = performance.now();
+            phase("prewarm-start", addr);
+            void helia.libp2p
+                .dial(multiaddr(addr))
+                .then(() => {
+                    phase("prewarm-connected", addr, { tookMs: performance.now() - startedAt });
+                    log(`pre-warm connected in ${fmtSeconds(performance.now() - startedAt)}: ${addr}`);
+                })
+                .catch((err: Error) => {
+                    phase("prewarm-failed", addr, { tookMs: performance.now() - startedAt, error: err.message });
+                    log(`pre-warm dial failed (harmless, discovery still runs): ${err.message}`);
+                });
+        }
+    }
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
         const connections = helia.libp2p.getConnections();
@@ -742,6 +842,7 @@ async function main() {
         entry.topic = await topicFor(entry.criteria);
         byTopic.set(entry.topic, entry);
     }
+    phase("boot", "topics derived");
     log(`${entries.length} directory contest topics derived`);
     renderDirs();
 
@@ -810,9 +911,10 @@ async function main() {
         getSubscribers(topic: string): unknown[];
         addEventListener(type: "subscription-change" | "message", cb: (evt: CustomEvent) => void): void;
     };
-    libp2p.addEventListener("connection:open", (evt) =>
-        log(`conn open: ${evt.detail.remotePeer} via ${evt.detail.remoteAddr}`)
-    );
+    libp2p.addEventListener("connection:open", (evt) => {
+        phase("conn", "open", { peer: String(evt.detail.remotePeer), addr: String(evt.detail.remoteAddr) });
+        log(`conn open: ${evt.detail.remotePeer} via ${evt.detail.remoteAddr}`);
+    });
     libp2p.addEventListener("connection:close", (evt) => log(`conn close: ${evt.detail.remotePeer}`));
     pubsub.addEventListener("subscription-change", (evt) => {
         const detail = evt.detail as { peerId: unknown; subscriptions: { topic: string; subscribe: boolean }[] };
@@ -820,7 +922,10 @@ async function main() {
         const codes = (detail.subscriptions ?? [])
             .filter((sub) => byTopic.has(sub.topic))
             .map((sub) => `${sub.subscribe ? "+" : "-"}/${byTopic.get(sub.topic)!.code}/`);
-        if (codes.length > 0) log(`topic subscriptions from ${detail.peerId}: ${codes.join(" ")}`);
+        if (codes.length > 0) {
+            phase("subscription-change", String(detail.peerId), { topics: codes.length });
+            log(`topic subscriptions from ${detail.peerId}: ${codes.join(" ")}`);
+        }
     });
     pubsub.addEventListener("message", (evt) => {
         const detail = evt.detail as { topic: string; data: Uint8Array; from?: unknown };
@@ -845,11 +950,22 @@ async function main() {
      * wire at once (queued ones haven't started any timeout yet), and a long explicit
      * signal for each once it starts (the library passes none, so the 10 s default
      * would apply). A node client needs neither — this is browser-connection behavior. */
-    const fetchWireLimit = pLimit(6);
+    const fetchWireLimit = pLimit(FETCH_WIRE_LIMIT);
     const realFetch = fetchSvc.fetch.bind(fetchSvc);
-    fetchSvc.fetch = async (peer, key, opts) =>
-        fetchWireLimit(async () => {
+    fetchSvc.fetch = async (peer, key, opts) => {
+        // Enqueued here, started below: the gap between the two IS the queue wait, which is
+        // the number that decides whether the limiter is helping or just eating the callers'
+        // (pkc-js's 5 s) timeout budget.
+        const enqueuedAt = performance.now();
+        return fetchWireLimit(async () => {
         const keyStr = typeof key === "string" ? key : new TextDecoder().decode(key);
+        const startedAt = performance.now();
+        // A votes fetch is either the per-topic root key or the bulk key that replaces 63 of
+        // them; anything else on this service is pkc-js's IPNS direct fetch. Classifying the
+        // bulk key matters — without it the votes side of the timeline reads as zero traffic.
+        const isBulkRoots = keyStr === "bitsocial-votes/roots";
+        const isVoteRoot = isBulkRoots || byTopic.has(keyStr.replace(/\/root$/, ""));
+        phase("fetch-start", keyStr, { queuedMs: startedAt - enqueuedAt, isVoteRoot, isBulkRoots });
         log(`checkpoint fetch → ${peer} ${keyStr}`);
         if (!(opts as { signal?: AbortSignal } | undefined)?.signal)
             opts = { ...(opts ?? {}), signal: AbortSignal.timeout(60_000) };
@@ -860,16 +976,19 @@ async function main() {
                 entry.rootFetched = true;
                 scheduleRenderDirs();
             }
+            phase("fetch-done", keyStr, { wireMs: performance.now() - startedAt, isVoteRoot, isBulkRoots, bytes: value?.length ?? 0 });
             log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
             const record = value === undefined ? undefined : parseRootRecord(value);
             for (const chunk of record?.chunks ?? []) checkpointChunks.set(chunk.toString(), chunk);
             if (record?.chunks?.length) void refreshCheckpointBundles(helia.blockstore);
             return value;
         } catch (err) {
+            phase("fetch-failed", keyStr, { wireMs: performance.now() - startedAt, isVoteRoot, isBulkRoots, error: (err as Error).message });
             log(`checkpoint fetch failed: ${(err as Error).message}`);
             throw err;
         }
-    });
+        });
+    };
 
     /* Catch-all bundle tap: every CRDT admission path (live accept, chase, local publish,
      * snapshot restore) writes the standalone bundle block through this put, and the
@@ -948,11 +1067,12 @@ async function main() {
      * seeder shows within the deadline, join anyway — cold-start is best-effort and the
      * armed re-pull + heartbeat converge it later. */
     {
-        const deadline = Date.now() + 20_000;
+        phase("boot", "seeder wait start", { budgetMs: WAIT_SEEDER_MS });
+        const deadline = Date.now() + WAIT_SEEDER_MS;
         const seederVisible = () => entries.some((e) => pubsub.getSubscribers(e.topic).length > 0);
         while (!seederVisible() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 250));
         if (seederVisible()) markBench("seeder visible as topic subscriber (cold pulls can go direct)");
-        else log("no seeder subscriber visible after 20 s — joining anyway; tallies fill in as the connection lands");
+        else log(`no seeder subscriber visible after ${WAIT_SEEDER_MS} ms — joining anyway; tallies fill in as the connection lands`);
     }
 
     /* Join every directory contest (bounded concurrency). Each contest's `update` event
@@ -963,16 +1083,24 @@ async function main() {
     const renderJoinProgress = () =>
         ($("contest-count").textContent = `${entries.length} directory contests — ${joinedCount} joined${joinedCount < entries.length ? "…" : ""}`);
     renderJoinProgress();
-    const limit = pLimit(8);
+    const limit = pLimit(JOIN_LIMIT);
+    phase("boot", "join fan-out start", { limit: JOIN_LIMIT, contests: entries.length });
     await Promise.all(
-        entries.map((entry) =>
-            limit(async () => {
+        entries.map((entry) => {
+            const enqueuedAt = performance.now();
+            return limit(async () => {
+                const startedAt = performance.now();
+                phase("join-start", entry.code, { queuedMs: startedAt - enqueuedAt });
                 try {
                     const contest = await voter.createContest({ criteria: entry.criteria });
                     entry.contest = contest;
                     contest.on("update", () => {
                         const ranking = contest.tally?.ranking ?? [];
                         const top = ranking[0];
+                        if (ranking.length > 0 && !entry.firstTallyAt) {
+                            entry.firstTallyAt = performance.now();
+                            phase("first-tally", entry.code, { boards: ranking.length });
+                        }
                         // Same line the seeder logs, so the two sides are directly comparable.
                         if (top)
                             log(
@@ -1011,16 +1139,18 @@ async function main() {
                     });
                     await contest.update();
                     entry.joined = true;
+                    phase("join-done", entry.code, { tookMs: performance.now() - startedAt });
                 } catch (err) {
                     entry.joinError = (err as Error).message;
+                    phase("join-failed", entry.code, { tookMs: performance.now() - startedAt, error: entry.joinError });
                     log(`/${entry.code}/ join failed: ${entry.joinError}`);
                 } finally {
                     joinedCount++;
                     renderJoinProgress();
                     scheduleRenderDirs();
                 }
-            })
-        )
+            });
+        })
     );
     booted = true;
     markBench(`all ${entries.length} contests joined (topics joined + persisted votes restored)`);
@@ -1029,6 +1159,7 @@ async function main() {
     // Every contest has joined and restored its snapshot: kick off each leaderboard's #1
     // community (those whose update already fired are no-ops) and re-check the "all loaded"
     // benchmark now that `booted` is true.
+    phase("boot", "sweep all leader communities");
     for (const entry of entries) void syncLeaderCommunity(entry);
     maybeMarkAllCommunitiesLoaded();
     if (selected) {
