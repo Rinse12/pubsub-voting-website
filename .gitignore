@@ -11,3 +11,6 @@ tes
 
 # seed-vote wallet key (scripts/seed-candidate-votes.ts) — never commit
 .vote-seed-wallet.json
+
+# benchmark raw per-round timelines (large); results/*.md is the committed summary
+results/*.jsonl
