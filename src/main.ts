@@ -594,6 +594,7 @@ let eligibilityRecheck: ReturnType<typeof setTimeout> | undefined;
 async function renderEligibility(address: `0x${string}`) {
     const gate = sharedRules.rule as unknown as { contract: `0x${string}`; min: number };
     clearTimeout(eligibilityRecheck);
+    $<HTMLButtonElement>("recheck-btn").disabled = true;
     try {
         const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
         if (!chain) throw new Error("no Base Sepolia chain client configured");
@@ -634,6 +635,9 @@ async function renderEligibility(address: `0x${string}`) {
     } catch (err) {
         if (signer.connectedAddress !== address) return;
         $("wallet-eligible").textContent = `balance check failed (${err instanceof Error ? err.message : String(err)}) — you can still vote; peers do their own read`;
+    } finally {
+        // A wallet switch mid-read means a newer renderEligibility owns the button now.
+        if (signer.connectedAddress === address) $<HTMLButtonElement>("recheck-btn").disabled = false;
     }
 }
 
@@ -908,6 +912,15 @@ async function main() {
         } catch (err) {
             log(`browser wallet failed: ${(err as Error).message}`);
         }
+    };
+    /* Re-read the Pass balance on demand — the automatic recheck only fires for a Pass that
+     * arrived mid-window, so an airdrop received while the tab sits open needs this. */
+    $("recheck-btn").onclick = () => {
+        const address = signer.connectedAddress;
+        if (!address) return;
+        $("wallet-eligible").textContent = "rechecking 5chan Pass balance…";
+        log(`rechecking 5chan Pass balance for ${address}`);
+        void renderEligibility(address);
     };
     $("forget-btn").onclick = () => {
         if (
