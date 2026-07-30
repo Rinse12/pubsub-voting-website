@@ -82,8 +82,14 @@ peers noticing — validation is done by every participant.
    holding none has its vote dropped before it is re-forwarded.
 4. One wallet, one vote: a newer ballot from the same wallet replaces the older one
    (last-write-wins), and an empty ballot withdraws.
-5. Votes expire after ~30 days (`voteExpiryBuckets`); voters keep a vote alive by simply
-   voting again (the site shows the expiry estimate).
+5. Votes expire after ~30 days (`voteExpiryBuckets`), counted from the voting window the
+   ballot was signed in — so a directory nobody keeps voting in eventually has an empty
+   leaderboard and **no board resolving its code**. Refreshing a vote means re-signing the
+   same ballot into the current window, which only the browser holding the wallet can do
+   (the seeder serves votes but has no key). The wallet card's **"Keep your votes alive"**
+   setting does it automatically for every vote this browser cast — hourly by default,
+   catching up on load for anything that went stale while the tab was closed — and the
+   selected directory shows the cast time, the last refresh, and the expiry estimate.
 
 ## Repo layout
 
@@ -258,9 +264,17 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 - **Board names are dangerous**: a vote carrying a `.bso` name is dropped by peers unless
   the name resolves on-chain to the claimed public key. The UI warns accordingly; plain
   public-key votes are always safe.
-- **Republishing is the client's job** (upstream design): the site stores your vote in
-  `localStorage` and shows the expiry; re-voting refreshes it. The seeder cannot do it
-  for you — it doesn't hold your key.
+- **Republishing is the client's job** (upstream design): the seeder cannot do it for you
+  — it doesn't hold your key, and the library deliberately publishes once and leaves the
+  schedule to its host (`republishIntervalBuckets` is the hint it offers). So the site
+  stores each vote in `localStorage` and refreshes it itself: a wall-clock due-check every
+  minute re-publishes any vote older than the chosen interval, which also catches up votes
+  that went stale while the tab was closed. Default **every hour**, far more often than
+  the ~15 days the protocol needs, because these are test contests. One voting window
+  (~1 h) is the shortest interval that does anything: a ballot is stamped with its
+  window's boundary block, so two publishes inside one window are byte-identical and
+  de-duplicate to a single bundle. Note the popup cost with an injected wallet — one
+  signature prompt per held vote, per interval; a burner signs silently.
 
 ## License
 

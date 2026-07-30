@@ -96,6 +96,38 @@
                         </button>
                     </dd>
                 </dl>
+
+                <h3>Keep your votes alive</h3>
+                <p class="hint">
+                    Votes decay on purpose: a ballot stops counting ~30 days after the voting window it
+                    was signed in, so a directory whose voters all fall silent ends up with an empty
+                    leaderboard and <em>no</em> board resolving its code. Nobody can refresh a vote for
+                    you — the seeder serves your vote but holds no key, and only the browser that signed
+                    it can sign it again. With this on, this tab re-publishes every vote you cast here
+                    (same board, same ballot, re-signed into the current window) on the interval below,
+                    and catches up anything that went stale while the tab was closed. The protocol only
+                    needs this every ~15 days; the shorter intervals are for exercising these test
+                    contests. Each refresh is a free signature — no gas, no transaction.
+                </p>
+                <div class="row">
+                    <label class="check">
+                        <input type="checkbox" id="republish-enabled" />
+                        Re-publish my votes automatically
+                    </label>
+                    <label class="check">
+                        every
+                        <select id="republish-interval"></select>
+                    </label>
+                    <button id="republish-now" class="small" type="button" title="Re-sign and re-publish every vote this browser holds, now">
+                        Re-publish now
+                    </button>
+                </div>
+                <p class="hint" id="republish-status">…</p>
+                <p class="hint" id="republish-warn" hidden>
+                    ⚠ Your wallet is an extension wallet, so <strong>every refresh asks it to sign once
+                    per vote you hold</strong> — a popup each, on every interval. A wallet generated in
+                    this browser signs silently.
+                </p>
             </section>
 
             <section class="card" id="dirs-card">
@@ -167,10 +199,16 @@
                         <dd><code id="my-vote-target"></code></dd>
                         <dt>Cast</dt>
                         <dd id="my-vote-when"></dd>
+                        <dt id="my-vote-refreshed-row" hidden>Last re-published</dt>
+                        <dd id="my-vote-refreshed" hidden></dd>
                         <dt>Expires</dt>
                         <dd id="my-vote-expiry"></dd>
                     </dl>
-                    <p class="hint">Votes decay: re-vote before expiry (just vote again) to keep it counted.</p>
+                    <p class="hint">
+                        Votes decay: expiry counts from the last time this ballot was published, so
+                        re-voting (or leaving “Keep your votes alive” on in the wallet card) is what
+                        keeps it counted.
+                    </p>
                     <button id="withdraw-btn" class="danger">Withdraw vote</button>
                 </div>
             </section>
