@@ -97,8 +97,13 @@ let selected: DirEntry | undefined;
 interface StoredVote {
     publicKey: string;
     name?: string;
-    at: number; // epoch ms when published
+    at: number; // epoch ms of the FIRST publish of this ballot (what the voter thinks of as "cast")
+    /** epoch ms of the most recent (re-)publish — what expiry actually counts from. Absent on
+     * records written before auto re-publishing existed; those fall back to `at`. */
+    refreshedAt?: number;
 }
+/** The publish that decides this vote's expiry: its latest one. */
+const lastPublishedAt = (stored: StoredVote) => stored.refreshedAt ?? stored.at;
 const myVoteKey = (entry: DirEntry, address: string) => `bso-vote:${entry.topic}:${address.toLowerCase()}`;
 function loadMyVote(entry: DirEntry, address: string): StoredVote | undefined {
     try {
@@ -107,6 +112,16 @@ function loadMyVote(entry: DirEntry, address: string): StoredVote | undefined {
     } catch {
         return undefined;
     }
+}
+/** Every wallet-address record this browser holds for `entry`, for the my-votes sweep. */
+function storedVotesFor(address: string): { entry: DirEntry; stored: StoredVote }[] {
+    const out: { entry: DirEntry; stored: StoredVote }[] = [];
+    for (const entry of entries) {
+        if (!entry.topic) continue;
+        const stored = loadMyVote(entry, address);
+        if (stored) out.push({ entry, stored });
+    }
+    return out;
 }
 
 /* ---------- state ---------- */
@@ -328,8 +343,13 @@ function renderMyVote() {
     wrap.hidden = false;
     $("my-vote-target").textContent = stored.name ? `${stored.name} (${shortKey(stored.publicKey)})` : stored.publicKey;
     $("my-vote-when").textContent = new Date(stored.at).toLocaleString();
-    const lifetimeMs = sharedRules.voteExpiryBuckets * sharedRules.blocksPerBucket * SECONDS_PER_BLOCK * 1000;
-    $("my-vote-expiry").textContent = `≈ ${new Date(stored.at + lifetimeMs).toLocaleString()}`;
+    // Only interesting once it differs from the cast time — i.e. once this ballot has been
+    // refreshed at least once. Expiry always counts from the LATEST publish.
+    const refreshed = lastPublishedAt(stored);
+    $("my-vote-refreshed-row").hidden = refreshed === stored.at;
+    $("my-vote-refreshed").hidden = refreshed === stored.at;
+    $("my-vote-refreshed").textContent = new Date(refreshed).toLocaleString();
+    $("my-vote-expiry").textContent = `≈ ${new Date(refreshed + VOTE_LIFETIME_MS).toLocaleString()}`;
 }
 
 function renderTally() {
@@ -570,6 +590,8 @@ function renderWallet(address: `0x${string}`) {
     $("wallet-eligible").textContent = "checking 5chan Pass balance…";
     void renderEligibility(address);
     renderMyVote();
+    renderRepublish(); // which votes are held (and whether signing pops up) is per-wallet
+    void republishVotes(); // this wallet's votes may have gone stale while the tab was closed
     scheduleRenderDirs(); // the "Your vote" column is per-wallet
 }
 
@@ -581,6 +603,13 @@ function renderWallet(address: `0x${string}`) {
  * defaults, identical for every directory contest. */
 const sampleBlockFor = (block: number) => Math.floor(block / sharedRules.blocksPerBucket) * sharedRules.blocksPerBucket;
 const nextWindowAfter = (sampleBlock: number) => sampleBlock + sharedRules.blocksPerBucket;
+/** One voting window in wall-clock ms (~1 h here). A re-publish only moves a vote forward when
+ * it lands in a LATER window than the last one: the ballot is stamped with the window's boundary
+ * block, so two publishes inside one window sign identical bytes — same bundle, same CID, no
+ * refresh. That makes one window the shortest re-publish interval worth offering. */
+const BUCKET_MS = sharedRules.blocksPerBucket * SECONDS_PER_BLOCK * 1000;
+/** How long a ballot keeps counting, measured from the window it was signed in (~30 days here). */
+const VOTE_LIFETIME_MS = sharedRules.voteExpiryBuckets * BUCKET_MS;
 /** "≈ HH:MM (in ~N min)" for the block `toBlock`, assuming `fromBlock` is (close to) head now. */
 function clockAtBlock(fromBlock: number, toBlock: number): string {
     const ms = Math.max(0, toBlock - fromBlock) * SECONDS_PER_BLOCK * 1000;
@@ -669,7 +698,15 @@ function showWalletError(message: string) {
     log(message);
 }
 
-async function castVote(entry: DirEntry, votes: Vote[]) {
+/**
+ * Sign and publish one ballot for `entry`, then remember it locally.
+ *
+ * `refresh` marks a re-publish of a ballot this browser already published (see the
+ * auto-re-publish section): identical votes, signed again into the CURRENT voting window so the
+ * bundle's expiry clock restarts. Everything else is the same publish — the library has no
+ * separate refresh call, and peers cannot tell the two apart (nor should they).
+ */
+async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}) {
     if (publishing) return;
     if (!voter) {
         log("not ready to vote yet — still booting");
@@ -696,23 +733,34 @@ async function castVote(entry: DirEntry, votes: Vote[]) {
             .map((v) => `${v.community.name ?? shortKey(v.community.publicKey)}:${v.vote >= 0 ? "+" : ""}${v.vote}`)
             .join(", ");
         log(
-            `/${entry.code}/ vote published for [${votedFor || "(empty ballot — retracts previous vote)"}] by ${signer.connectedAddress} ` +
+            `/${entry.code}/ vote ${refresh ? "re-published (keeping it alive)" : "published"} for ` +
+                `[${votedFor || "(empty ballot — retracts previous vote)"}] by ${signer.connectedAddress} ` +
                 `(gossipsub sent it directly to ${recipientCount} peer${recipientCount === 1 ? "" : "s"})`
         );
         const address = signer.connectedAddress;
         if (address) {
             if (votes.length === 0) localStorage.removeItem(myVoteKey(entry, address));
-            else
+            else {
+                // Re-publishing the SAME ballot (auto refresh, or the voter clicking the same
+                // board again) keeps the original cast time and only moves the expiry clock;
+                // voting for a different board starts a new record.
+                const previous = loadMyVote(entry, address);
+                const target = votes[0].community;
+                const sameBallot = previous?.publicKey === target.publicKey && previous?.name === target.name;
+                const now = Date.now();
                 localStorage.setItem(
                     myVoteKey(entry, address),
                     JSON.stringify({
-                        publicKey: votes[0].community.publicKey,
-                        name: votes[0].community.name,
-                        at: Date.now()
+                        publicKey: target.publicKey,
+                        name: target.name,
+                        at: sameBallot ? previous.at : now,
+                        refreshedAt: now
                     } satisfies StoredVote)
                 );
+            }
         }
         renderMyVote();
+        renderRepublish();
         scheduleRenderDirs();
     } catch (err) {
         const message = (err as Error).message ?? String(err);
@@ -726,6 +774,216 @@ async function castVote(entry: DirEntry, votes: Vote[]) {
     } finally {
         publishing = false;
     }
+}
+
+/* ---------- automatic re-publishing (keeping votes alive) ----------
+ * Votes decay on purpose: a ballot stops counting `voteExpiryBuckets` windows (~30 days here)
+ * after the window it was signed in, and the CRDT filters it out at read time, so a directory
+ * whose voters all fall silent ends with an empty leaderboard and NO board resolving its code —
+ * a live electorate is what keeps a directory resolvable.
+ *
+ * Nothing else can prevent that on a voter's behalf. The seeder holds no private key, so it can
+ * serve and re-gossip a bundle but can never re-sign one; the library deliberately doesn't
+ * re-publish either (upstream DESIGN.md "Republishing is the client's job", and its
+ * `republishIntervalBuckets` helper is exactly this scheduling hint). Only the browser holding
+ * the wallet can refresh a vote, by signing the same ballot again into the current window.
+ *
+ * So this tab does it: every stored vote for the connected wallet is re-published on the
+ * configured interval, catching up on load for anything that went stale while the tab was
+ * closed. The interval defaults to one hour — far more often than the ~15 days
+ * (`republishIntervalBuckets`, half the expiry window) the protocol actually needs, because
+ * these are test contests and a chatty refresh loop is the thing under test. Cheap per round:
+ * one signature and one gossip message per vote held, no gas, no chain write.
+ *
+ * Two things bound the damage if it misbehaves. A refresh signed in the same voting window as
+ * the last one is byte-identical, so it is a de-duplicated no-op rather than a second vote. And
+ * a wallet that has lost its 5chan Pass gets its refresh evicted by the same deferred gate check
+ * as any other vote, which drops the local record (see the contest `error` handler) and thereby
+ * stops the loop retrying that contest. */
+const REPUBLISH_KEY = "bso-vote:republish";
+interface RepublishSettings {
+    enabled: boolean;
+    intervalMs: number;
+}
+/** Offered intervals. The floor is one voting window — below that a refresh re-signs identical
+ * bytes (see BUCKET_MS) — and the ceiling is the library's own recommendation, half the expiry
+ * window, which is the longest interval that still leaves a full missed cycle of slack. */
+const REPUBLISH_CHOICES: { ms: number; label: string }[] = [
+    { ms: BUCKET_MS, label: "hour (one voting window)" },
+    { ms: 6 * BUCKET_MS, label: "6 hours" },
+    { ms: 24 * BUCKET_MS, label: "day" },
+    { ms: 7 * 24 * BUCKET_MS, label: "week" },
+    { ms: VOTE_LIFETIME_MS / 2, label: "15 days (the protocol's own recommendation)" }
+];
+const DEFAULT_REPUBLISH: RepublishSettings = { enabled: true, intervalMs: BUCKET_MS };
+/** How often the due-check runs. Independent of the interval itself: a wall-clock comparison per
+ * tick is what makes this survive a suspended laptop, a closed tab, or a changed setting. */
+const REPUBLISH_TICK_MS = 60_000;
+/** Breathing room between two publishes in one sweep — a voter holding all 63 votes would
+ * otherwise fire 63 signatures and gossip messages back to back. */
+const REPUBLISH_GAP_MS = 250;
+/** How long a sweep waits for the contest topics to have a subscribed peer before giving up on
+ * this round. Measured: the catch-up sweep fires the moment the last contest's `update()`
+ * resolves, which can be a second or two BEFORE any peer shows up as a subscriber of those
+ * topics — and gossipsub rejects a publish outright (`NoPeersSubscribedToTopic`) when it would
+ * reach nobody, so an un-gated sweep burns its refreshes on a mesh that isn't there yet. */
+const REPUBLISH_MESH_WAIT_MS = 30_000;
+
+function loadRepublishSettings(): RepublishSettings {
+    try {
+        const raw = localStorage.getItem(REPUBLISH_KEY);
+        if (!raw) return { ...DEFAULT_REPUBLISH };
+        const parsed = JSON.parse(raw) as Partial<RepublishSettings>;
+        // A stored interval from an older build (or a hand-edited one) is snapped back onto the
+        // offered set, so the <select> can never show a blank value.
+        const choice = REPUBLISH_CHOICES.find((c) => c.ms === parsed.intervalMs);
+        return {
+            enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : DEFAULT_REPUBLISH.enabled,
+            intervalMs: choice?.ms ?? DEFAULT_REPUBLISH.intervalMs
+        };
+    } catch {
+        return { ...DEFAULT_REPUBLISH };
+    }
+}
+let republishSettings = loadRepublishSettings();
+function saveRepublishSettings() {
+    try {
+        localStorage.setItem(REPUBLISH_KEY, JSON.stringify(republishSettings));
+    } catch {
+        // Setting still applies to this page view; it just won't persist.
+    }
+}
+
+let republishSweeping = false; // one sweep at a time (a slow sweep must not overlap the next tick)
+/** How many peers subscribe to `topic`; wired to the pubsub service once it exists (see main). */
+let subscriberCount: (topic: string) => number = () => 0;
+
+/** Votes whose last publish is older than the interval — i.e. due for a refresh now. */
+function dueVotes(address: string): { entry: DirEntry; stored: StoredVote }[] {
+    const cutoff = Date.now() - republishSettings.intervalMs;
+    return storedVotesFor(address).filter(({ stored }) => lastPublishedAt(stored) <= cutoff);
+}
+
+/**
+ * Re-publish every vote that is due (or every vote held, with `all`, for the manual button).
+ *
+ * Runs only once the contests have joined AND their topics have a subscribed peer. Both gates
+ * are the same lesson: gossipsub refuses a publish that would reach nobody, so a refresh fired
+ * into an empty mesh is not slow, it is lost — and a lost refresh looks exactly like a vote the
+ * user never had. Anything skipped keeps its old timestamp and is simply due again next tick.
+ */
+async function republishVotes({ all = false } = {}) {
+    const address = signer.connectedAddress;
+    if (republishSweeping || !booted || !voter || !address) return;
+    if (!all && !republishSettings.enabled) return;
+    const targets = all ? storedVotesFor(address) : dueVotes(address);
+    if (targets.length === 0) return;
+    republishSweeping = true;
+    try {
+        // The seeder announces all 63 subscriptions in one exchange, so seeing ONE topic with a
+        // subscriber is seeing them all — the same signal the join gate above waits on.
+        const meshUp = () => targets.some(({ entry }) => subscriberCount(entry.topic) > 0);
+        if (!meshUp()) {
+            republishStatus("waiting for a topic peer before re-publishing…");
+            const deadline = Date.now() + REPUBLISH_MESH_WAIT_MS;
+            while (!meshUp() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));
+            if (!meshUp()) {
+                log(`re-publish deferred: no peer subscribes to these contest topics yet — retrying in ${REPUBLISH_TICK_MS / 1000}s`);
+                return;
+            }
+        }
+        log(`re-publishing ${targets.length} vote${targets.length === 1 ? "" : "s"} for ${address} to keep ${targets.length === 1 ? "it" : "them"} from expiring`);
+        let done = 0;
+        let deferred = 0;
+        for (const { entry } of targets) {
+            // Re-read per contest: a sweep over 63 votes takes a while, and the voter may have
+            // withdrawn, re-voted, or had a vote evicted since it started.
+            if (signer.connectedAddress !== address) break; // wallet switched mid-sweep
+            const stored = loadMyVote(entry, address);
+            if (!stored) continue;
+            if (subscriberCount(entry.topic) === 0) {
+                deferred++; // this one topic has no peer yet; next tick tries it again
+                continue;
+            }
+            const community = stored.name ? { publicKey: stored.publicKey, name: stored.name } : { publicKey: stored.publicKey };
+            await castVote(entry, [{ community, vote: 1 }], { refresh: true });
+            done++;
+            republishStatus(`re-publishing your votes… (${done}/${targets.length})`);
+            if (done < targets.length) await new Promise((r) => setTimeout(r, REPUBLISH_GAP_MS));
+        }
+        if (deferred > 0) log(`${deferred} vote(s) not re-published yet: no peer on those topics — retrying in ${REPUBLISH_TICK_MS / 1000}s`);
+    } finally {
+        republishSweeping = false;
+        renderRepublish();
+    }
+}
+
+function republishStatus(text: string) {
+    $("republish-status").textContent = text;
+}
+
+/** Checkbox, interval, button state and the one-line "what will happen next" status. */
+function renderRepublish() {
+    $<HTMLInputElement>("republish-enabled").checked = republishSettings.enabled;
+    $<HTMLSelectElement>("republish-interval").value = String(republishSettings.intervalMs);
+    const address = signer.connectedAddress;
+    const held = address ? storedVotesFor(address) : [];
+    $<HTMLButtonElement>("republish-now").disabled = republishSweeping || !booted || held.length === 0;
+    // An injected wallet signs with a popup per vote, so an hourly sweep over many votes is a
+    // very different experience there than with a burner. Say so where the interval is chosen.
+    $("republish-warn").hidden = !(signer.kind === "injected" && republishSettings.enabled && held.length > 0);
+
+    if (republishSweeping) return; // the sweep owns the status line while it runs
+    if (!address) {
+        republishStatus("No wallet yet — only the browser that signed a vote can refresh it.");
+        return;
+    }
+    const votes = `${held.length} vote${held.length === 1 ? "" : "s"}`;
+    if (held.length === 0) {
+        republishStatus(`No votes cast from this browser with ${shortKey(address)} yet — nothing to keep alive.`);
+        return;
+    }
+    if (!republishSettings.enabled) {
+        const soonest = Math.min(...held.map(({ stored }) => lastPublishedAt(stored) + VOTE_LIFETIME_MS));
+        republishStatus(`Off — ${votes} held; the first stops counting ≈ ${new Date(soonest).toLocaleString()} unless you vote again.`);
+        return;
+    }
+    const nextAt = Math.min(...held.map(({ stored }) => lastPublishedAt(stored))) + republishSettings.intervalMs;
+    republishStatus(
+        booted
+            ? `On — ${votes} held; next refresh ${nextAt <= Date.now() ? "due now" : `≈ ${new Date(nextAt).toLocaleString()}`}.`
+            : `On — ${votes} held; the first refresh runs once every contest has joined.`
+    );
+}
+
+/** Wire the controls and start the due-check ticker. Called during boot, before the join. */
+function startRepublishing() {
+    $<HTMLSelectElement>("republish-interval").replaceChildren(
+        ...REPUBLISH_CHOICES.map(({ ms, label }) => new Option(label, String(ms)))
+    );
+    $<HTMLInputElement>("republish-enabled").onchange = (e) => {
+        republishSettings.enabled = (e.target as HTMLInputElement).checked;
+        saveRepublishSettings();
+        log(`automatic vote re-publishing ${republishSettings.enabled ? "enabled" : "disabled"}`);
+        renderRepublish();
+        if (republishSettings.enabled) void republishVotes();
+    };
+    $<HTMLSelectElement>("republish-interval").onchange = (e) => {
+        republishSettings.intervalMs = Number((e.target as HTMLSelectElement).value);
+        saveRepublishSettings();
+        log(`vote re-publish interval set to ${REPUBLISH_CHOICES.find((c) => c.ms === republishSettings.intervalMs)?.label}`);
+        renderRepublish();
+        void republishVotes(); // a shorter interval can make votes due immediately
+    };
+    $("republish-now").onclick = () => void republishVotes({ all: true });
+    renderRepublish();
+    // Wall-clock due-check rather than a per-vote timer: this catches up votes that went stale
+    // while the tab was closed or the laptop asleep, and needs no rescheduling when the interval
+    // changes. The re-render also keeps the "next refresh" line honest as time passes.
+    setInterval(() => {
+        renderRepublish();
+        void republishVotes();
+    }, REPUBLISH_TICK_MS);
 }
 
 /* ---------- cold-start tuning knobs ----------
@@ -883,6 +1141,7 @@ async function main() {
      * voter, and a returning visitor should see their identity without waiting or clicking.
      * The restore waits for the topics above only because renderMyVote and the overview's
      * "Your vote" column read topic-scoped my-vote records. */
+    startRepublishing(); // before the restore below: renderWallet paints the re-publish panel too
     if (BrowserWalletSigner.hasStoredBurner()) {
         const address = signer.useBurner();
         log(`browser wallet restored from a previous visit: ${address}`);
@@ -938,6 +1197,7 @@ async function main() {
             $("wallet-info").hidden = true;
             $("connect-btn").textContent = "Connect wallet";
             renderMyVote();
+            renderRepublish();
             scheduleRenderDirs();
         }
         log(address ? `browser wallet deleted: ${address}` : "no stored browser wallet to delete");
@@ -953,6 +1213,7 @@ async function main() {
         getSubscribers(topic: string): unknown[];
         addEventListener(type: "subscription-change" | "message", cb: (evt: CustomEvent) => void): void;
     };
+    subscriberCount = (topic) => pubsub.getSubscribers(topic).length; // the re-publish sweep's mesh gate
     libp2p.addEventListener("connection:open", (evt) => {
         phase("conn", "open", { peer: String(evt.detail.remotePeer), addr: String(evt.detail.remoteAddr) });
         log(`conn open: ${evt.detail.remotePeer} via ${evt.detail.remoteAddr}`);
@@ -1173,6 +1434,9 @@ async function main() {
                             if (address.toLowerCase() === signer.connectedAddress?.toLowerCase()) {
                                 localStorage.removeItem(myVoteKey(entry, address));
                                 renderMyVote();
+                                // Dropping the record is also what stops the re-publish loop from
+                                // refreshing a vote the network will keep rejecting.
+                                renderRepublish();
                                 scheduleRenderDirs();
                             }
                             return;
@@ -1204,6 +1468,10 @@ async function main() {
     phase("boot", "sweep all leader communities");
     for (const entry of entries) void syncLeaderCommunity(entry);
     maybeMarkAllCommunitiesLoaded();
+    // Every topic is joined now, so a refresh can actually reach subscribers: catch up any vote
+    // that fell due while this browser was closed (the ticker handles the rest of the session).
+    renderRepublish();
+    void republishVotes();
     if (selected) {
         renderTally();
         showSelectedCommunity();
