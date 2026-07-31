@@ -1,6 +1,7 @@
 import {
     PubsubVoter,
     topicFor,
+    republishIntervalBuckets,
     CommunitySchema,
     InvalidCommunityNameError,
     VoteEvictedError,
@@ -790,10 +791,15 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
  *
  * So this tab does it: every stored vote for the connected wallet is re-published on the
  * configured interval, catching up on load for anything that went stale while the tab was
- * closed. The interval defaults to one hour — far more often than the ~15 days
- * (`republishIntervalBuckets`, half the expiry window) the protocol actually needs, because
- * these are test contests and a chatty refresh loop is the thing under test. Cheap per round:
- * one signature and one gossip message per vote held, no gas, no chain write.
+ * closed. The interval defaults to ONE VOTING WINDOW — far more often than
+ * `republishIntervalBuckets` (half the expiry window) actually requires, because these are test
+ * contests and a chatty refresh loop is the thing under test. Cheap per round: one signature
+ * and one gossip message per vote held, no gas, no chain write.
+ *
+ * Not one duration below is a literal. Window size, vote lifetime and the recommended interval
+ * all fall out of the manifest (`blocksPerBucket` × `voteExpiryBuckets` × block time), so they
+ * are computed here and written into the copy at runtime — a manifest edit must move the UI,
+ * not silently make it lie.
  *
  * Two things bound the damage if it misbehaves. A refresh signed in the same voting window as
  * the last one is byte-identical, so it is a de-duplicated no-op rather than a second vote. And
@@ -805,16 +811,43 @@ interface RepublishSettings {
     enabled: boolean;
     intervalMs: number;
 }
-/** Offered intervals. The floor is one voting window — below that a refresh re-signs identical
- * bytes (see BUCKET_MS) — and the ceiling is the library's own recommendation, half the expiry
- * window, which is the longest interval that still leaves a full missed cycle of slack. */
+/** The library's own answer to "how often should a client refresh THIS contest set?" — half the
+ * expiry window, the longest interval that still leaves a full missed cycle of slack. Derived
+ * from the criteria, so it tracks the manifest instead of restating it. */
+const RECOMMENDED_REPUBLISH_MS = republishIntervalBuckets(sharedRules) * BUCKET_MS;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+/** A duration as its coarsest sensible unit ("1 hour", "6 hours", "15 days"). Everything this
+ * panel says about time is manifest-derived, so no such number may be written into the copy. */
+function formatDuration(ms: number): string {
+    for (const [size, one, many] of [
+        [DAY_MS, "day", "days"],
+        [HOUR_MS, "hour", "hours"],
+        [60_000, "minute", "minutes"],
+        [1_000, "second", "seconds"]
+    ] as const) {
+        if (ms < size) continue;
+        const n = Math.round((ms / size) * 10) / 10;
+        return `${n} ${n === 1 ? one : many}`;
+    }
+    return `${Math.round(ms)} ms`;
+}
+/** Offered intervals, all derived. The floor is one voting window — below that a refresh
+ * re-signs identical bytes (see BUCKET_MS) — and the ceiling is the recommendation above; the
+ * round wall-clock steps in between are convenience, and a manifest whose window or expiry
+ * squeezes them out simply doesn't offer them. */
 const REPUBLISH_CHOICES: { ms: number; label: string }[] = [
-    { ms: BUCKET_MS, label: "hour (one voting window)" },
-    { ms: 6 * BUCKET_MS, label: "6 hours" },
-    { ms: 24 * BUCKET_MS, label: "day" },
-    { ms: 7 * 24 * BUCKET_MS, label: "week" },
-    { ms: VOTE_LIFETIME_MS / 2, label: "15 days (the protocol's own recommendation)" }
-];
+    ...new Set([BUCKET_MS, 6 * HOUR_MS, DAY_MS, 7 * DAY_MS, RECOMMENDED_REPUBLISH_MS])
+]
+    .filter((ms) => ms >= BUCKET_MS && ms <= RECOMMENDED_REPUBLISH_MS)
+    .sort((a, b) => a - b)
+    .map((ms) => {
+        const notes = [
+            ...(ms === BUCKET_MS ? ["one voting window"] : []),
+            ...(ms === RECOMMENDED_REPUBLISH_MS ? ["the protocol's own recommendation"] : [])
+        ];
+        return { ms, label: notes.length === 0 ? formatDuration(ms) : `${formatDuration(ms)} (${notes.join(" — ")})` };
+    });
 const DEFAULT_REPUBLISH: RepublishSettings = { enabled: true, intervalMs: BUCKET_MS };
 /** How often the due-check runs. Independent of the interval itself: a wall-clock comparison per
  * tick is what makes this survive a suspended laptop, a closed tab, or a changed setting. */
@@ -929,8 +962,8 @@ function renderRepublish() {
     const address = signer.connectedAddress;
     const held = address ? storedVotesFor(address) : [];
     $<HTMLButtonElement>("republish-now").disabled = republishSweeping || !booted || held.length === 0;
-    // An injected wallet signs with a popup per vote, so an hourly sweep over many votes is a
-    // very different experience there than with a burner. Say so where the interval is chosen.
+    // An injected wallet signs with a popup per vote, so a sweep over many votes is a very
+    // different experience there than with a burner. Say so where the interval is chosen.
     $("republish-warn").hidden = !(signer.kind === "injected" && republishSettings.enabled && held.length > 0);
 
     if (republishSweeping) return; // the sweep owns the status line while it runs
@@ -958,6 +991,10 @@ function renderRepublish() {
 
 /** Wire the controls and start the due-check ticker. Called during boot, before the join. */
 function startRepublishing() {
+    // The two durations the explanatory copy quotes are manifest-derived, so the markup ships
+    // placeholders and they are filled in here alongside the interval list.
+    $("vote-lifetime").textContent = formatDuration(VOTE_LIFETIME_MS);
+    $("republish-recommended").textContent = formatDuration(RECOMMENDED_REPUBLISH_MS);
     $<HTMLSelectElement>("republish-interval").replaceChildren(
         ...REPUBLISH_CHOICES.map(({ ms, label }) => new Option(label, String(ms)))
     );

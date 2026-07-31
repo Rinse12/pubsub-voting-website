@@ -269,12 +269,15 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
   schedule to its host (`republishIntervalBuckets` is the hint it offers). So the site
   stores each vote in `localStorage` and refreshes it itself: a wall-clock due-check every
   minute re-publishes any vote older than the chosen interval, which also catches up votes
-  that went stale while the tab was closed. Default **every hour**, far more often than
-  the ~15 days the protocol needs, because these are test contests. One voting window
-  (~1 h) is the shortest interval that does anything: a ballot is stamped with its
-  window's boundary block, so two publishes inside one window are byte-identical and
-  de-duplicate to a single bundle. Note the popup cost with an injected wallet — one
-  signature prompt per held vote, per interval; a burner signs silently.
+  that went stale while the tab was closed. Default **one voting window**, far more often
+  than `republishIntervalBuckets` needs, because these are test contests. A window is also
+  the shortest interval that does anything: a ballot is stamped with its window's boundary
+  block, so two publishes inside one window are byte-identical and de-duplicate to a
+  single bundle. Every duration here is derived from the manifest at runtime and rendered
+  into the UI copy — with the shipped manifest a window is ~1 h, expiry ~30 days and the
+  recommendation ~15 days, but nothing in the page states those as constants. Note the
+  popup cost with an injected wallet — one signature prompt per held vote, per interval; a
+  burner signs silently.
 
 ## License
 
