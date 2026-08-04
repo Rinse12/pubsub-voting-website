@@ -170,11 +170,22 @@ function markBench(label: string, sinceMs = t0) {
  * t+ offset, so a Playwright driver can read `window.__phases` and attribute wall-clock to
  * a phase (seeder dial vs root fetch vs bitswap chase vs pkc-js community load) instead of
  * inferring it from the five coarse rows the panel shows. Pure instrumentation: nothing
- * reads these back, and `kind` is the grouping key the driver aggregates on. */
+ * reads these back, and `kind` is the grouping key the driver aggregates on.
+ *
+ * BOUNDED, oldest-first. Five of the call sites fire per-event for the life of the tab
+ * (`conn` on every connection:open, `subscription-change` per peer, and the three
+ * `fetch-*` ones per fetch), so an unbounded array here grew with uptime and peer churn
+ * and could never be collected — `window.__phases` pins it. Measured at ~1.2 GB of live
+ * JS objects over a 20.8 h run (see issue #3). The driver reads this during or just after
+ * cold start, which is a few hundred events, so a cap this size never truncates what a
+ * benchmark actually looks at. */
 export type PhaseEvent = { kind: string; label: string; atMs: number; [extra: string]: unknown };
+const PHASE_LIMIT = 5_000;
 const phases: PhaseEvent[] = [];
 function phase(kind: string, label: string, extra: Record<string, unknown> = {}) {
     phases.push({ kind, label, atMs: performance.now() - t0, ...extra });
+    // splice, not reassign: `window.__phases` holds this exact array.
+    if (phases.length > PHASE_LIMIT) phases.splice(0, phases.length - PHASE_LIMIT);
 }
 declare global {
     interface Window {
@@ -196,14 +207,38 @@ window.__bench = benchRows;
  * bundle. */
 type BundleSource = "live gossip" | "checkpoint chunk" | "local vote" | "snapshot restore" | "chase";
 const INFERRED_SOURCES = new Set<BundleSource>(["snapshot restore", "chase"]);
+/* BOUNDED, oldest-first. This is an observation log, NOT vote state: the tally is a
+ * last-write-wins set keyed by wallet inside pubsub-voting, which supersedes a wallet's
+ * older bundle on its own. This map is keyed by bundle CID, and a re-published vote lands
+ * at a new bucket → new blockNumber → new bytes → new CID, so with the hourly re-publish
+ * across 63 contests it grew forever instead of converging. Dropping the oldest rows
+ * cannot lose a vote or change a tally; it only shortens how far back the panel remembers. */
+const BUNDLE_LIMIT = 500;
 const downloadedBundles = new Map<string, { bundle: unknown; source: BundleSource }>();
-const checkpointChunks = new Map<string, CID>(); // chunk CID string → CID, across all contests
+let bundlesSeen = 0; // lifetime count, so the summary stays honest once we start evicting
+const checkpointChunks = new Map<string, CID>(); // chunk CID string → CID; PENDING decode only
+const decodedChunks = new Set<string>(); // chunk CIDs already decoded, so we never redo them
+const DECODED_CHUNK_LIMIT = 5_000; // forgetting one only costs a re-decode, never correctness
+
+/** Drop oldest entries until `size <= limit`. Maps and Sets both iterate in insertion order. */
+function capOldest(store: Map<string, unknown> | Set<string>, limit: number) {
+    while (store.size > limit) {
+        const oldest = store.keys().next().value;
+        if (oldest === undefined) return;
+        store.delete(oldest);
+    }
+}
 
 function renderBundles() {
+    // The summary is cheap and always accurate, whether or not the panel is expanded.
     const bySource = new Map<BundleSource, number>();
     for (const { source } of downloadedBundles.values()) bySource.set(source, (bySource.get(source) ?? 0) + 1);
     const breakdown = [...bySource.entries()].map(([source, count]) => `${count} ${source}`).join(", ");
-    $("bundles-summary").textContent = `Downloaded vote bundles (${downloadedBundles.size}${breakdown ? ` — ${breakdown}` : ""})`;
+    const shown = bundlesSeen > downloadedBundles.size ? `${downloadedBundles.size} of ${bundlesSeen}` : `${downloadedBundles.size}`;
+    $("bundles-summary").textContent = `Downloaded vote bundles (${shown}${breakdown ? ` — ${breakdown}` : ""})`;
+    // The JSON body is O(n) to build, so only pay for it while someone is looking. Before
+    // this, every insert re-serialised the whole map, making a fill O(n²) in time and garbage.
+    if (!$<HTMLDetailsElement>("bundles-details").open) return;
     $("bundles-json").textContent =
         downloadedBundles.size === 0
             ? "none yet"
@@ -224,9 +259,14 @@ function addBundle({ cid, bundle }: DownloadedBundle, source: BundleSource) {
         return;
     }
     downloadedBundles.set(cid, { bundle, source });
+    bundlesSeen++;
+    capOldest(downloadedBundles, BUNDLE_LIMIT);
     log(`vote bundle downloaded (${source}): ${describeBundleContent(bundle)} — cid ${cid}`);
     renderBundles();
 }
+
+// Expanding the panel is what pays for the JSON body; renderBundles() skips it while closed.
+$<HTMLDetailsElement>("bundles-details").addEventListener("toggle", () => renderBundles());
 
 /** One line of WHO voted for WHAT, from a decoded display bundle; best-effort. */
 function describeBundleContent(bundle: unknown): string {
@@ -241,14 +281,29 @@ function describeBundleContent(bundle: unknown): string {
     }
 }
 
+/* Incremental and non-overlapping. This used to re-fetch and re-decode EVERY chunk it had
+ * ever seen on every root fetch that carried chunks — across 63 contests that set only
+ * grows, so each pass was longer than the last, and it was invoked with `void` so passes
+ * piled up on each other. A chunk's content is immutable (it is content-addressed), so
+ * decoding it twice can only ever produce the same bundles: once decoded, it is done. */
+let refreshingChunks = false;
 async function refreshCheckpointBundles(blockstore: { get(cid: CID, opts?: { signal?: AbortSignal }): unknown }) {
-    for (const chunk of checkpointChunks.values()) {
-        try {
-            const bytes = (await blockstore.get(chunk, { signal: AbortSignal.timeout(10_000) })) as Uint8Array;
-            for (const item of await decodeChunkBundles(bytes)) addBundle(item, "checkpoint chunk");
-        } catch {
-            // Chunk not chased/served yet — the next tally update retries.
+    if (refreshingChunks) return;
+    refreshingChunks = true;
+    try {
+        for (const [key, chunk] of [...checkpointChunks]) {
+            try {
+                const bytes = (await blockstore.get(chunk, { signal: AbortSignal.timeout(10_000) })) as Uint8Array;
+                for (const item of await decodeChunkBundles(bytes)) addBundle(item, "checkpoint chunk");
+                checkpointChunks.delete(key);
+                decodedChunks.add(key);
+                capOldest(decodedChunks, DECODED_CHUNK_LIMIT);
+            } catch {
+                // Chunk not chased/served yet — it stays pending and the next tally update retries.
+            }
         }
+    } finally {
+        refreshingChunks = false;
     }
 }
 
@@ -1319,11 +1374,22 @@ async function main() {
             phase("fetch-done", keyStr, { wireMs: performance.now() - startedAt, isVoteRoot, isBulkRoots, bytes: value?.length ?? 0 });
             log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
             const record = value === undefined ? undefined : parseRootRecord(value);
-            for (const chunk of record?.chunks ?? []) checkpointChunks.set(chunk.toString(), chunk);
+            for (const chunk of record?.chunks ?? []) {
+                const key = chunk.toString();
+                if (!decodedChunks.has(key)) checkpointChunks.set(key, chunk);
+            }
             if (record?.chunks?.length) void refreshCheckpointBundles(helia.blockstore);
             return value;
         } catch (err) {
-            phase("fetch-failed", keyStr, { wireMs: performance.now() - startedAt, isVoteRoot, isBulkRoots, error: (err as Error).message });
+            // Truncated: these are @libp2p/fetch errors and short in practice, but a
+            // retained error string is exactly how a client-side error can become a
+            // memory problem (viem embeds whole RPC request bodies in `.message`).
+            phase("fetch-failed", keyStr, {
+                wireMs: performance.now() - startedAt,
+                isVoteRoot,
+                isBulkRoots,
+                error: (err as Error).message.slice(0, 500)
+            });
             log(`checkpoint fetch failed: ${(err as Error).message}`);
             throw err;
         }
