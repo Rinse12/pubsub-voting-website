@@ -3,7 +3,7 @@
 **Live site: <https://bso-board-vote.netlify.app>**
 
 A static website where people vote over libp2p **pubsub** — no server counts the votes.
-**One contest per 5chan directory** (`/g/`, `/a/`, `/b/`… — 63 of them, from the
+**One contest per 5chan directory** (`/g/`, `/a/`, `/b/`… — 64 of them, from the
 canonical [5chan-directories list](https://github.com/bitsocialnet/lists/tree/master/5chan-directories)):
 each directory's contest elects which board hosts that directory code — the
 highest-scoring board resolves it, and if it goes offline 5chan rotates to the
@@ -25,7 +25,7 @@ directory's first-registered board.
 Built on [`@bitsocial/pubsub-voting`](https://github.com/bitsocialnet/pubsub-voting):
 votes are EIP-712 ballots signed by the voter's wallet, gossiped on a topic derived
 from the contest rules, validated by every peer (signature + bucketed-block freshness)
-**before** re-forwarding, and merged with a last-write-wins CRDT. The 63 contests are
+**before** re-forwarding, and merged with a last-write-wins CRDT. The 64 contests are
 authored as ONE directory manifest (shared `defaults` + one entry per directory) and
 derived through the library's `deriveDirectoryCriteria` — the exact multi-contest flow
 the library documents for 5chan.
@@ -50,7 +50,7 @@ Netlify (static HTML/JS)                     new-plebbit (89.36.231.48)
 ┌──────────────────────────┐                ┌────────────────────────────────┐
 │ browser voter            │   WSS          │ seeder: Node.js Helia node     │
 │  - ONE pkc-js Helia node─┼───────────────▶│  - AutoTLS cert (libp2p.direct)│
-│    shared by votes AND   │  (AutoTLS)     │  - joins all 63 contest topics │
+│    shared by votes AND   │  (AutoTLS)     │  - joins all 64 contest topics │
 │    community loading     │                │  - validates + forwards votes  │
 │  - MetaMask signs ballot │                │  - serves checkpoint to        │
 │  - renders live tally +  │                │    cold-joining browsers       │
@@ -94,7 +94,7 @@ peers noticing — validation is done by every participant.
 ## Repo layout
 
 ```
-shared/    directory-manifest.{json,ts} (GENERATED — defines all 63 contests AND
+shared/    directory-manifest.{json,ts} (GENERATED — defines all 64 contests AND
            their topics; .json ships to the seeder, .ts into the site bundle),
            contests.ts (derives the criteria), viem chain factory, .bso name
            resolvers, wire-log decoders
@@ -125,18 +125,32 @@ npx netlify-cli deploy --prod --dir dist --no-build   # site: bso-board-vote
 
 ### The seeder (bitsocial-seeder on new-plebbit)
 
-The canonical seeder is the `bitsocial-seeder` systemd unit on new-plebbit (checkout
-`/root/bitsocial-seeder`, branch `seed-pubsub-votes`, data in
-`/root/bitsocial-seeder-data`). It derives all 63 topics from
-`/root/bitsocial-seeder/bso-board-vote-manifest.jsonc`, which must be a copy of this
-repo's [shared/directory-manifest.json](shared/directory-manifest.json) — any manifest
-change means copying it over AND redeploying the site (the changed contests' topics
-fork, see below).
+The canonical seeder is the **`bitsocial-seeder` Docker Compose service** on new-plebbit —
+project dir `/root/bitsocial-seeder`, image `ghcr.io/bitsocialnet/bitsocial-seeder:latest`
+(rebuilt and pushed by that repo's CI on every merge to master), state in the named volume
+`bitsocial-seeder-data` mounted at `/data`. It runs **votes-only** (`COMMUNITY_LIST_SOURCES=none`
+in `/root/bitsocial-seeder/.env`), so it needs no bitsocial daemon; the same `.env` holds
+`VOTES_CHAIN_RPC_URLS` for the Base Sepolia gate reads.
+
+**It does not read a local copy of the manifest.** `VOTES_MANIFEST_SOURCES` is unset, so it falls
+back to the published manifest at
+`https://raw.githubusercontent.com/bitsocialnet/lists/master/5chan-directory-criteria.jsonc` and
+re-reads it on every reconcile tick (default 10 min, `VOTES_RECONCILE_INTERVAL_MS`). So a manifest
+change ships by **regenerating it here → merging it to `bitsocialnet/lists` → redeploying this
+site**; there is no file to copy to the host. Two gotchas:
+
+- `raw.githubusercontent.com` serves that file with `max-age=300`, so a tick within ~5 minutes of
+  the merge can still read the OLD manifest. Wait out the cache or restart the container again.
+- **Upgrade the seeder before flipping the manifest** when the change needs a newer
+  `@bitsocial/pubsub-voting` (a new gate rule, say). A seeder on an older library recuses from the
+  new criteria with `UnknownRuleError` and seeds nothing until it catches up.
 
 ```bash
 ssh new-plebbit
-journalctl -fu bitsocial-seeder              # votes lines look like: 0x… votes [board:+1]
-systemctl restart bitsocial-seeder
+sudo docker logs -f bitsocial-seeder         # votes lines look like: 0x… votes [board:+1]
+sudo docker logs bitsocial-seeder 2>&1 | grep "seeding .* votes contests"   # healthy: "seeding 64 votes contests"
+cd /root/bitsocial-seeder && sudo docker compose restart                    # re-tick now (re-reads the manifest)
+cd /root/bitsocial-seeder && sudo docker compose pull && sudo docker compose up -d   # deploy a new seeder build
 ```
 
 Reading the site's on-page log: gossip messages and served root records are logged
@@ -183,12 +197,14 @@ The contests are defined by the generated manifest — edit
 [scripts/generate-directory-manifest.ts](scripts/generate-directory-manifest.ts) (the
 shared `defaults`, the contestId suffix, or the naming scheme) and run
 `npm run manifest`; never hand-edit the emitted files. Changing `defaults` re-derives
-EVERY directory's criteria bytes and therefore **forks all 63 topics** at once (bump
+EVERY directory's criteria bytes and therefore **forks all 64 topics** at once (bump
 the `CONTEST_ID_SUFFIX` for a deliberate fresh start); a new directory appearing in the
 lists repo adds one new contest without touching the others. Old votes don't carry over
 a fork. (`ETH_RPC_URLS` in [shared/contests.ts](shared/contests.ts) is client-local
-transport config since pubsub-voting 0.1.x and can change without forking.) Redeploy
-the site and copy the manifest to the bitsocial-seeder (then restart it) together.
+transport config since pubsub-voting 0.1.x and can change without forking.) Ship a manifest
+change as: merge the regenerated file to `bitsocialnet/lists` (the seeder's source — see "The
+seeder" above) and redeploy this site together; upgrade the seeder first if the change needs a
+newer `@bitsocial/pubsub-voting`.
 History: single-contest era — contest 4 `5chan-pass-vote-test-1` (topic
 `…rs5qulu6jz5nq`, the first 5chan-Pass-gated one) was replaced by the 63 directory
 contests; before it, contest
