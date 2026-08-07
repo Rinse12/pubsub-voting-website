@@ -36,14 +36,14 @@ const defaults = {
     blocksPerBucket: 1800,
     voteExpiryBuckets: 720,
     rule: {
-        type: "erc721-min-balance",
+        type: "erc5192-min-balance",
         chain: "baseSepolia",
         contract: "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
         min: 1
     },
     weight: { type: "constant", value: 1 },
     requires: {
-        rules: ["erc721-min-balance", "constant"],
+        rules: ["erc5192-min-balance", "constant"],
         chains: { baseSepolia: { chainId: 84532 } }
     }
 };
