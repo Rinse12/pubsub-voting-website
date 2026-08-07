@@ -9,7 +9,7 @@ each directory's contest elects which board hosts that directory code — the
 highest-scoring board resolves it, and if it goes offline 5chan rotates to the
 next-highest. Every contest is **NFT-gated: one vote per wallet per directory, for
 wallets holding at least one 5chan Pass**, the
-[FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9)
+[FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
 (`erc721-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
 still costs no gas). Every peer reads the voter's `balanceOf` at the contest's pinned
 bucket block before counting the vote, so an ineligible wallet's ballot is dropped by
@@ -82,8 +82,14 @@ peers noticing — validation is done by every participant.
    holding none has its vote dropped before it is re-forwarded.
 4. One wallet, one vote: a newer ballot from the same wallet replaces the older one
    (last-write-wins), and an empty ballot withdraws.
-5. Votes expire after ~30 days (`voteExpiryBuckets`); voters keep a vote alive by simply
-   voting again (the site shows the expiry estimate).
+5. Votes expire after ~30 days (`voteExpiryBuckets`), counted from the voting window the
+   ballot was signed in — so a directory nobody keeps voting in eventually has an empty
+   leaderboard and **no board resolving its code**. Refreshing a vote means re-signing the
+   same ballot into the current window, which only the browser holding the wallet can do
+   (the seeder serves votes but has no key). The wallet card's **"Keep your votes alive"**
+   setting does it automatically for every vote this browser cast — hourly by default,
+   catching up on load for anything that went stale while the tab was closed — and the
+   selected directory shows the cast time, the last refresh, and the expiry estimate.
 
 ## Repo layout
 
@@ -214,7 +220,7 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 ## Notable implementation choices & gotchas
 
 - **The gate is the built-in `erc721-min-balance` rule** — hold ≥ 1
-  [5chan Pass](https://sepolia.basescan.org/address/0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9)
+  [5chan Pass](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
   on Base Sepolia (testnet NFT, minted for free by its owner from the
   `testnet_5chan_pass` project; duplicate an address there to stack passes). Both
   configured RPCs serve archive state, which the pinned bucket-block reads require.
@@ -258,9 +264,20 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 - **Board names are dangerous**: a vote carrying a `.bso` name is dropped by peers unless
   the name resolves on-chain to the claimed public key. The UI warns accordingly; plain
   public-key votes are always safe.
-- **Republishing is the client's job** (upstream design): the site stores your vote in
-  `localStorage` and shows the expiry; re-voting refreshes it. The seeder cannot do it
-  for you — it doesn't hold your key.
+- **Republishing is the client's job** (upstream design): the seeder cannot do it for you
+  — it doesn't hold your key, and the library deliberately publishes once and leaves the
+  schedule to its host (`republishIntervalBuckets` is the hint it offers). So the site
+  stores each vote in `localStorage` and refreshes it itself: a wall-clock due-check every
+  minute re-publishes any vote older than the chosen interval, which also catches up votes
+  that went stale while the tab was closed. Default **one voting window**, far more often
+  than `republishIntervalBuckets` needs, because these are test contests. A window is also
+  the shortest interval that does anything: a ballot is stamped with its window's boundary
+  block, so two publishes inside one window are byte-identical and de-duplicate to a
+  single bundle. Every duration here is derived from the manifest at runtime and rendered
+  into the UI copy — with the shipped manifest a window is ~1 h, expiry ~30 days and the
+  recommendation ~15 days, but nothing in the page states those as constants. Note the
+  popup cost with an injected wallet — one signature prompt per held vote, per interval; a
+  burner signs silently.
 
 ## License
 
