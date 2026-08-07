@@ -2,7 +2,7 @@
   "name": "pubsub-voting-website",
   "private": true,
   "version": "0.0.1",
-  "description": "Browser voting over libp2p pubsub, gated by an ERC-20 (BSO) balance — web client + AutoTLS seeder node.",
+  "description": "Browser voting over libp2p pubsub, gated by an ERC-20 (BSO) balance \u2014 web client + AutoTLS seeder node.",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "scripts": {
@@ -42,7 +42,8 @@
     "zod": "4.3.6"
   },
   "overrides": {
-    "@libp2p/interface": "3.2.5"
+    "@libp2p/interface": "3.2.5",
+    "@peculiar/webcrypto": "1.7.0"
   },
   "devDependencies": {
     "tsx": "4.23.1",
