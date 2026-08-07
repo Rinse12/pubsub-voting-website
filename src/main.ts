@@ -640,9 +640,9 @@ function renderWallet(address: `0x${string}`) {
     $("wallet-address").textContent = address;
     $("wallet-kind").textContent =
         signer.kind === "burner" ? "burner — generated and stored in this browser" : "injected (MetaMask etc.)";
-    // Every contest's gate is the same `erc721-min-balance` (shared manifest defaults):
-    // the wallet must hold a 5chan Pass. Show the live balance read; peers verify the
-    // same read at the bucket block.
+    // Every contest's gate is the same `erc5192-min-balance` (shared manifest defaults):
+    // the wallet must hold a 5chan Pass, on a contract that declares the pass soulbound.
+    // Show the live balance read; peers verify the same read at the bucket block.
     $("wallet-eligible").textContent = "checking 5chan Pass balance…";
     void renderEligibility(address);
     renderMyVote();

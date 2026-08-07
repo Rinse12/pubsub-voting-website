@@ -2,7 +2,7 @@
   "name": "pubsub-voting-website",
   "private": true,
   "version": "0.0.1",
-  "description": "Browser voting over libp2p pubsub, gated by an ERC-20 (BSO) balance \u2014 web client + AutoTLS seeder node.",
+  "description": "Browser voting over libp2p pubsub, gated by an ERC-20 (BSO) balance — web client + AutoTLS seeder node.",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "scripts": {
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@bitsocial/bso-resolver": "0.0.10",
-    "@bitsocial/pubsub-voting": "0.1.5",
+    "@bitsocial/pubsub-voting": "0.2.0",
     "@chainsafe/libp2p-noise": "17.0.0",
     "@chainsafe/libp2p-yamux": "8.0.1",
     "@helia/delegated-routing-v1-http-api-client": "6.0.1",

@@ -10,7 +10,7 @@ highest-scoring board resolves it, and if it goes offline 5chan rotates to the
 next-highest. Every contest is **NFT-gated: one vote per wallet per directory, for
 wallets holding at least one 5chan Pass**, the
 [FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
-(`erc721-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
+(`erc5192-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
 still costs no gas). Every peer reads the voter's `balanceOf` at the contest's pinned
 bucket block before counting the vote, so an ineligible wallet's ballot is dropped by
 the whole network, not by a moderator. Visitors without an extension wallet can have the
@@ -219,10 +219,14 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 
 ## Notable implementation choices & gotchas
 
-- **The gate is the built-in `erc721-min-balance` rule** — hold ≥ 1
+- **The gate is the built-in `erc5192-min-balance` rule** — hold ≥ 1
   [5chan Pass](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
   on Base Sepolia (testnet NFT, minted for free by its owner from the
-  `testnet_5chan_pass` project; duplicate an address there to stack passes). Both
+  `testnet_5chan_pass` project; duplicate an address there to stack passes). The rule
+  reads the same `balanceOf` a plain ERC-721 gate would, plus one
+  `supportsInterface(0xb45a3c0e)` at the same pinned block: the contract must declare its
+  passes locked, so one pass cannot be walked through several wallets to back several
+  concurrent votes. The pre-cutover transferable pass (`0xa0095E…`) fails that assertion. Both
   configured RPCs serve archive state, which the pinned bucket-block reads require.
   Still built-ins only, so any stock `@bitsocial/pubsub-voting` client can join this
   contest, no custom rule registration. Earlier forks of this contest used the open
