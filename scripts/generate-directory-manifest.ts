@@ -38,7 +38,7 @@ const defaults = {
     rule: {
         type: "erc721-min-balance",
         chain: "baseSepolia",
-        contract: "0xa0095E8B45EBd2Fc590FeBC249bBc191D74920a9",
+        contract: "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
         min: 1
     },
     weight: { type: "constant", value: 1 },
