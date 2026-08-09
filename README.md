@@ -10,12 +10,13 @@ highest-scoring board resolves it, and if it goes offline 5chan rotates to the
 next-highest. Every contest is **NFT-gated: one vote per wallet per directory, for
 wallets holding at least one 5chan Pass**, the
 [FiveChanPass ERC-721 on Base Sepolia](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
-(`erc5192-min-balance` rule; a free testnet NFT airdropped by its owner — voting itself
+(`erc5192-min-balance` rule; a free testnet NFT anyone can mint at the
+[faucet](https://testnet-5chan-pass.netlify.app/) — voting itself
 still costs no gas). Every peer reads the voter's `balanceOf` at the contest's pinned
 bucket block before counting the vote, so an ineligible wallet's ballot is dropped by
 the whole network, not by a moderator. Visitors without an extension wallet can have the
-page **generate a burner wallet in the browser** (key persisted in localStorage) and ask
-the Pass owner to airdrop to it. Voters pick a directory, then vote for a board on its
+page **generate a burner wallet in the browser** (key persisted in localStorage) and
+mint a Pass to it from the faucet. Voters pick a directory, then vote for a board on its
 live tally or for any board by key (a `12D3KooW…` public key, optionally a verified
 `.bso` name). **Every board the site shows comes from the vote tally itself** — the
 site never reads the lists repo at runtime; only the one-time seed script
@@ -237,8 +238,9 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 
 - **The gate is the built-in `erc5192-min-balance` rule** — hold ≥ 1
   [5chan Pass](https://sepolia.basescan.org/address/0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852)
-  on Base Sepolia (testnet NFT, minted for free by its owner from the
-  `testnet_5chan_pass` project; duplicate an address there to stack passes). The rule
+  on Base Sepolia (testnet NFT, minted for free at the
+  [faucet](https://testnet-5chan-pass.netlify.app/) — one per captcha — or by its owner
+  from the `testnet_5chan_pass` project; duplicate an address there to stack passes). The rule
   reads the same `balanceOf` a plain ERC-721 gate would, plus one
   `supportsInterface(0xb45a3c0e)` at the same pinned block: the contract must declare its
   passes locked, so one pass cannot be walked through several wallets to back several

@@ -30,7 +30,8 @@
                 <p class="sub">
                     Which board should host each 5chan directory — <code>/g/</code>, <code>/a/</code>,
                     <code>/b/</code>…? One trustless contest per directory over libp2p pubsub.
-                    <strong>Every wallet holding a 5chan Pass</strong> (a free testnet NFT on Base Sepolia) gets
+                    <strong>Every wallet holding a 5chan Pass</strong> (a free testnet NFT on Base Sepolia —
+                    grab one at <a href="https://testnet-5chan-pass.netlify.app/" target="_blank" rel="noreferrer">the faucet</a>) gets
                     exactly one vote per directory — no gas, no transaction — signed in your browser, verified by
                     every peer against the chain, counted with no server. The highest-scoring board resolves the
                     directory code; if it goes offline, 5chan rotates to the next-highest.
@@ -73,9 +74,11 @@
                     a free signature, never a transaction. These test contests are gated: only wallets holding a
                     <strong>5chan Pass</strong> (ERC-721 on Base Sepolia) are eligible — every peer reads your
                     balance on-chain before counting your vote, and each directory counts your wallet once.
-                    Connect the wallet that received the Pass (MetaMask etc.), or generate a throwaway wallet in
-                    this browser and ask the Pass owner to airdrop to it — it is saved here and restored
-                    automatically on your next visit, until you forget it (or clear site data).
+                    No Pass yet? Mint one free at
+                    <a href="https://testnet-5chan-pass.netlify.app/" target="_blank" rel="noreferrer">the faucet</a>
+                    (solve a captcha, paste your address). Connect the wallet that holds the Pass (MetaMask etc.),
+                    or generate a throwaway wallet in this browser and feed its address to the faucet — it is saved
+                    here and restored automatically on your next visit, until you forget it (or clear site data).
                 </p>
                 <div class="row">
                     <button id="connect-btn">Connect wallet</button>
@@ -175,7 +178,12 @@
                     <tbody id="tally-body"></tbody>
                 </table>
 
-                <h3>Vote for a board</h3>
+                <h3>Vote for a new board</h3>
+                <p class="hint">
+                    Nominate a board that isn't on the leaderboard yet by entering its public key —
+                    your vote is what puts it there. To vote for a board already listed, use the
+                    Vote button on its leaderboard row above.
+                </p>
                 <form id="new-board-form">
                     <label>
                         Board public key <span class="req">(required)</span>
