@@ -9,7 +9,6 @@ import {
     type Criteria,
     type Vote
 } from "@bitsocial/pubsub-voting";
-import { erc721Abi } from "viem";
 import { allCriteria, sharedRules, directoryCodeOf, SECONDS_PER_BLOCK } from "../shared/contests.js";
 import { directoryManifest } from "../shared/directory-manifest.js";
 import { chainClientFactory } from "../shared/chains.js";
@@ -652,13 +651,10 @@ function renderWallet(address: `0x${string}`) {
 }
 
 /* ---------- voting-window (bucket) math ----------
- * Mirrors the library's (unexported) bucket math: every verifier reads gate balances at
- * the current bucket's boundary block — the head rounded down to `blocksPerBucket`. So a
- * Pass received mid-bucket only starts counting at the NEXT boundary, up to a full
- * bucket (~1 h here) after the airdrop. The bucket size and gate are shared manifest
- * defaults, identical for every directory contest. */
-const sampleBlockFor = (block: number) => Math.floor(block / sharedRules.blocksPerBucket) * sharedRules.blocksPerBucket;
-const nextWindowAfter = (sampleBlock: number) => sampleBlock + sharedRules.blocksPerBucket;
+ * Only for wall-clock estimates now (re-publish cadence, vote lifetime). Eligibility does NOT
+ * live here: which block the gate reads at is the RULE's business, and this file used to guess
+ * it — mirroring a bucket-boundary read that stopped being what the gate did the moment it
+ * started reading the head. Ask `contest.checkEligibility` instead (see renderEligibility). */
 /** One voting window in wall-clock ms (~1 h here). A re-publish only moves a vote forward when
  * it lands in a LATER window than the last one: the ballot is stamped with the window's boundary
  * block, so two publishes inside one window sign identical bytes — same bundle, same CID, no
@@ -666,56 +662,51 @@ const nextWindowAfter = (sampleBlock: number) => sampleBlock + sharedRules.block
 const BUCKET_MS = sharedRules.blocksPerBucket * SECONDS_PER_BLOCK * 1000;
 /** How long a ballot keeps counting, measured from the window it was signed in (~30 days here). */
 const VOTE_LIFETIME_MS = sharedRules.voteExpiryBuckets * BUCKET_MS;
-/** "≈ HH:MM (in ~N min)" for the block `toBlock`, assuming `fromBlock` is (close to) head now. */
-function clockAtBlock(fromBlock: number, toBlock: number): string {
-    const ms = Math.max(0, toBlock - fromBlock) * SECONDS_PER_BLOCK * 1000;
-    const clock = new Date(Date.now() + ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const minutes = Math.round(ms / 60_000);
-    return `≈ ${clock} (${minutes < 1 ? "under a minute" : `in ~${minutes} min`})`;
+/**
+ * Any joined contest can answer an eligibility question: all 63 share one gate rule, and the
+ * library namespaces the gate memo by that rule, so whichever contest we ask, the read is shared
+ * with every other one and with the verify path.
+ */
+function gateAnsweringContest(): Contest | undefined {
+    return entries.find((entry) => entry.joined && entry.contest)?.contest ?? entries.find((entry) => entry.contest)?.contest;
 }
 
-let eligibilityRecheck: ReturnType<typeof setTimeout> | undefined;
+/** Show `text` in the eligibility badge, class `cls`. `text` is set as text, never as HTML. */
+function setEligibilityBadge(text: string, cls: "badge-ok" | "badge-bad"): void {
+    const span = document.createElement("span");
+    span.className = cls;
+    span.textContent = text;
+    $("wallet-eligible").replaceChildren(span);
+}
 
+/**
+ * Ask the LIBRARY whether this wallet's vote would count, and show its answer.
+ *
+ * This used to read `balanceOf` twice — at head and at the voting window's boundary block — and
+ * decide for itself which one peers honour. That was a copy of the gate rule's block choice
+ * living outside the gate rule, and it went silently wrong the moment the rule changed: after the
+ * gate began reading the head first, this kept telling voters their Pass "arrived mid-window" and
+ * to wait up to an hour for a window that no longer gated anything.
+ *
+ * `checkEligibility` runs the contest's real rule through the real verify context, so it reads at
+ * whatever block that rule reads at and applies whatever threshold it applies. Its `error` is the
+ * rule's own wording and is rendered verbatim — this file deliberately knows nothing about
+ * blocks, buckets or `min` any more.
+ */
 async function renderEligibility(address: `0x${string}`) {
-    const gate = sharedRules.rule as unknown as { contract: `0x${string}`; min: number };
-    clearTimeout(eligibilityRecheck);
     $<HTMLButtonElement>("recheck-btn").disabled = true;
     try {
-        const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
-        if (!chain) throw new Error("no Base Sepolia chain client configured");
-        const head = Number(await chain.getBlockNumber());
-        const sampleBlock = sampleBlockFor(head);
-        const balanceAt = (blockNumber?: number) =>
-            chain.readContract({
-                address: gate.contract,
-                abi: erc721Abi,
-                functionName: "balanceOf",
-                args: [address],
-                ...(blockNumber === undefined ? {} : { blockNumber: BigInt(blockNumber) })
-            });
-        // Two reads: "latest" is what the user's wallet UI agrees with; the window's
-        // boundary block is what every peer actually verifies against. When they disagree
-        // (Pass airdropped mid-window), warn BEFORE the user publishes a doomed vote.
-        const [balance, sampled] = await Promise.all([balanceAt(), balanceAt(sampleBlock)]);
+        const contest = gateAnsweringContest();
+        if (!contest) {
+            $("wallet-eligible").textContent = "checking once a directory contest has joined…";
+            return;
+        }
+        const check = await contest.checkEligibility({ address });
         if (signer.connectedAddress !== address) return; // wallet changed mid-read
-        const min = BigInt(gate.min);
-        if (sampled >= min) {
-            $("wallet-eligible").innerHTML =
-                `<span class="badge-ok">yes — holds ${balance} 5chan Pass${balance === 1n ? "" : "es"}</span>`;
-        } else if (balance >= min) {
-            const nextBlock = nextWindowAfter(sampleBlock);
-            $("wallet-eligible").innerHTML =
-                `<span class="badge-warn">not yet — your 5chan Pass arrived mid-window. Peers verify balances at ` +
-                `block ${sampleBlock} (before your Pass), so a vote published now will be rejected. The next voting ` +
-                `window opens at block ${nextBlock}, ${clockAtBlock(head, nextBlock)} — vote then.</span>`;
-            // Flip the badge (and clear any stale rejection alert) once the window opens.
-            eligibilityRecheck = setTimeout(
-                () => void renderEligibility(address),
-                ((nextBlock - head) * SECONDS_PER_BLOCK + 10) * 1000
-            );
+        if (check.eligible) {
+            setEligibilityBadge(`yes — holds ${check.score} 5chan Pass${check.score === 1n ? "" : "es"}`, "badge-ok");
         } else {
-            $("wallet-eligible").innerHTML =
-                `<span class="badge-bad">no — holds no 5chan Pass (peers will drop this wallet's votes; ask the owner for an airdrop)</span>`;
+            setEligibilityBadge(`no — ${check.error}`, "badge-bad");
         }
     } catch (err) {
         if (signer.connectedAddress !== address) return;
@@ -726,24 +717,19 @@ async function renderEligibility(address: `0x${string}`) {
     }
 }
 
-/** Translate a peer-side eviction verdict into something actionable. The one rejection an
- * honestly-eligible voter hits is the gate sampling a balance BEFORE their Pass arrived
- * (see the voting-window note above); every other reason passes through verbatim. */
+/**
+ * Translate a peer-side eviction verdict into something actionable.
+ *
+ * There is nothing to translate any more: the rule states its own reason ("this wallet holds none
+ * of the gate token …"), the library carries it through to `verdict.reason`, and it is already
+ * written for the voter. This only strips the pipeline's `not admitted: ` prefix and names the
+ * board. Do not add rule-specific special cases here — that is what went stale last time.
+ */
 function explainEviction(entry: DirEntry, err: VoteEvictedError): string {
-    const gated = /^not admitted: rule score is 0n at block (\d+)$/.exec(err.verdict.reason);
-    if (gated) {
-        const sampleBlock = Number(gated[1]);
-        const nextBlock = nextWindowAfter(sampleBlock);
-        // The bundle was block-stamped at publish time, moments before this eviction —
-        // close enough to head for a wall-clock estimate without another RPC read.
-        return (
-            `Your /${entry.code}/ vote was rejected: your wallet held no 5chan Pass at block ${sampleBlock}, where this voting ` +
-            `window's balances are read — a Pass received after that block does not count yet. The next window ` +
-            `opens at block ${nextBlock} (${clockAtBlock(err.bundle.blockNumber, nextBlock)}); publish your vote again then.`
-        );
-    }
-    return `Your /${entry.code}/ vote was rejected: ${err.verdict.reason}. Fix the cause and publish again.`;
+    const reason = err.verdict.reason.replace(/^not admitted: /, "");
+    return `Your /${entry.code}/ vote was rejected: ${reason}.`;
 }
+
 
 /* ---------- voting ---------- */
 function showWalletError(message: string) {
@@ -1264,8 +1250,9 @@ async function main() {
             log(`browser wallet failed: ${(err as Error).message}`);
         }
     };
-    /* Re-read the Pass balance on demand — the automatic recheck only fires for a Pass that
-     * arrived mid-window, so an airdrop received while the tab sits open needs this. */
+    /* Re-read the Pass balance on demand. There is no automatic recheck any more: the old one
+     * existed only to flip the badge at the next window boundary, and the gate no longer waits
+     * for one — an airdrop counts as soon as it lands, so this button is the whole story. */
     $("recheck-btn").onclick = () => {
         const address = signer.connectedAddress;
         if (!address) return;
