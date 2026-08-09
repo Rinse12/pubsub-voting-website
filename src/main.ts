@@ -373,6 +373,7 @@ function select(code: string) {
     if (!entry) return;
     if (location.hash !== `#/${code}/`) location.hash = `#/${code}/`;
     selected = entry;
+    hideVoteConfirm(); // a lingering confirmation would describe the PREVIOUS directory's vote
     $("dir-card").hidden = false;
     $("community-card").hidden = false;
     $("dir-title").textContent = `${entry.title} — directory contest`;
@@ -405,6 +406,48 @@ function renderMyVote() {
     $("my-vote-refreshed").hidden = refreshed === stored.at;
     $("my-vote-refreshed").textContent = new Date(refreshed).toLocaleString();
     $("my-vote-expiry").textContent = `≈ ${new Date(refreshed + VOTE_LIFETIME_MS).toLocaleString()}`;
+}
+
+/* ---------- post-publish confirmation cue ----------
+ * One ballot per wallet means a second vote silently replaces the first, so without a cue a
+ * re-vote looks like it did nothing. Says WHAT the publish did to your standing ballot
+ * (cast / moved / re-published / withdrawn). Only for publishes the user initiated — the
+ * background re-publish already reports through the "Last re-published" row. */
+let voteConfirmTimer: ReturnType<typeof setTimeout> | undefined;
+function hideVoteConfirm() {
+    clearTimeout(voteConfirmTimer);
+    $("vote-confirm").hidden = true;
+}
+function showVoteConfirm(votes: Vote[], previous: StoredVote | undefined) {
+    const nameOf = (c: { name?: string; publicKey: string }) => c.name ?? shortKey(c.publicKey);
+    const target = votes[0]?.community;
+    const sameBallot = target && previous?.publicKey === target.publicKey && previous?.name === target.name;
+    let message: string;
+    if (!target)
+        message = previous
+            ? `Vote withdrawn — your vote for ${nameOf(previous)} no longer counts.`
+            : "Withdrawal published — this wallet has no standing vote here.";
+    else if (sameBallot)
+        message =
+            `You already voted for ${nameOf(target)} — nothing double-counts. Your ballot was re-published, ` +
+            `pushing its expiry to ≈ ${new Date(Date.now() + VOTE_LIFETIME_MS).toLocaleString()}.`;
+    else if (previous)
+        message =
+            `Vote moved from ${nameOf(previous)} to ${nameOf(target)} — one ballot per wallet, ` +
+            `so your earlier vote no longer counts.`;
+    else message = `Vote cast for ${nameOf(target)}.`;
+    const confirm = $("vote-confirm");
+    confirm.textContent = `✓ ${message}`;
+    confirm.hidden = false;
+    clearTimeout(voteConfirmTimer);
+    voteConfirmTimer = setTimeout(hideVoteConfirm, 15_000);
+    // Pulse both the banner and the "Your vote" panel it summarizes; restart the animation
+    // when publishes come back-to-back.
+    for (const el of [confirm, $("my-vote-wrap")]) {
+        el.classList.remove("flash");
+        void el.offsetWidth;
+        el.classList.add("flash");
+    }
 }
 
 function renderTally() {
@@ -781,12 +824,12 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
         );
         const address = signer.connectedAddress;
         if (address) {
+            const previous = loadMyVote(entry, address);
             if (votes.length === 0) localStorage.removeItem(myVoteKey(entry, address));
             else {
                 // Re-publishing the SAME ballot (auto refresh, or the voter clicking the same
                 // board again) keeps the original cast time and only moves the expiry clock;
                 // voting for a different board starts a new record.
-                const previous = loadMyVote(entry, address);
                 const target = votes[0].community;
                 const sameBallot = previous?.publicKey === target.publicKey && previous?.name === target.name;
                 const now = Date.now();
@@ -800,6 +843,9 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
                     } satisfies StoredVote)
                 );
             }
+            // Every non-refresh publish is a click in the selected dir card, so the cue
+            // always describes the leaderboard the user is looking at.
+            if (!refresh) showVoteConfirm(votes, previous);
         }
         renderMyVote();
         renderRepublish();
