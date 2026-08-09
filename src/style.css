@@ -109,6 +109,20 @@ th { color: var(--muted); font-weight: 500; }
 td .status-ok { color: var(--ok); }
 td .status-pending { color: var(--warn); }
 
+/* post-publish confirmation: what your vote just did (cast / moved / re-published / withdrawn) */
+#vote-confirm {
+    margin: 0.5rem 0 0;
+    padding: 0.5rem 0.65rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: var(--ok);
+    background: var(--accent-soft);
+}
+.flash { animation: vote-flash 1.6s ease-out; }
+@keyframes vote-flash {
+    from { background: var(--accent-softer); }
+}
+
 /* directories overview: clickable rows, selected highlight */
 .dir-row { cursor: pointer; }
 .dir-row:hover td { background: var(--accent-soft); }
