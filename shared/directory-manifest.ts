@@ -11,13 +11,15 @@ export const directoryManifest = {
             "max": 1
         },
         "maxVotesPerAddress": 1,
+        "bucketChainId": 84532,
         "blocksPerBucket": 1800,
         "voteExpiryBuckets": 720,
-        "rule": {
-            "type": "erc5192-min-balance",
-            "chain": "baseSepolia",
-            "contract": "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
-            "min": 1
+        "gate": {
+            "rule": {
+                "type": "erc5192-min-balance",
+                "contract": "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
+                "min": 1
+            }
         },
         "weight": {
             "type": "constant",
@@ -27,12 +29,7 @@ export const directoryManifest = {
             "rules": [
                 "erc5192-min-balance",
                 "constant"
-            ],
-            "chains": {
-                "baseSepolia": {
-                    "chainId": 84532
-                }
-            }
+            ]
         }
     },
     "contests": [
