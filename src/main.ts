@@ -9,6 +9,7 @@ import {
     type Criteria,
     type Vote
 } from "@bitsocial/pubsub-voting";
+import { eligibilityBadge, explainEviction as describeEviction, renderGateChecklist } from "./eligibility-view.js";
 import { allCriteria, sharedRules, directoryCodeOf, SECONDS_PER_BLOCK } from "../shared/contests.js";
 import { directoryManifest } from "../shared/directory-manifest.js";
 import { chainClientFactory } from "../shared/chains.js";
@@ -731,10 +732,16 @@ function setEligibilityBadge(text: string, cls: "badge-ok" | "badge-bad"): void 
  * gate began reading the head first, this kept telling voters their Pass "arrived mid-window" and
  * to wait up to an hour for a window that no longer gated anything.
  *
- * `checkEligibility` runs the contest's real rule through the real verify context, so it reads at
- * whatever block that rule reads at and applies whatever threshold it applies. Its `error` is the
- * rule's own wording and is rendered verbatim — this file deliberately knows nothing about
- * blocks, buckets or `min` any more.
+ * `checkEligibility` runs the contest's real rules through the real verify context, so each reads
+ * at whatever block it reads at and applies whatever threshold it applies. The wording is the
+ * rules' own and is rendered verbatim — this file deliberately knows nothing about blocks, buckets
+ * or `min` any more.
+ *
+ * The badge is the verdict; `renderGateChecklist` draws the per-rule breakdown beneath it when the
+ * gate is a tree. Both live in eligibility-view.ts, where they are tested against the tree shapes
+ * these single-rule test contests never produce: `check.error` alone is the blame set joined into
+ * one sentence, which is everything a one-rule gate can say, but the moment a contest gates on
+ * `all`/`any` it loses the structure — and loses an unknown (a rule whose read failed) entirely.
  */
 async function renderEligibility(address: `0x${string}`) {
     $<HTMLButtonElement>("recheck-btn").disabled = true;
@@ -746,13 +753,12 @@ async function renderEligibility(address: `0x${string}`) {
         }
         const check = await contest.checkEligibility({ address });
         if (signer.connectedAddress !== address) return; // wallet changed mid-read
-        if (check.eligible) {
-            setEligibilityBadge(`yes — holds ${check.score} 5chan Pass${check.score === 1n ? "" : "es"}`, "badge-ok");
-        } else {
-            setEligibilityBadge(`no — ${check.error}`, "badge-bad");
-        }
+        const badge = eligibilityBadge(check);
+        setEligibilityBadge(badge.text, badge.cls);
+        renderGateChecklist(document, $("wallet-gate"), check);
     } catch (err) {
         if (signer.connectedAddress !== address) return;
+        $("wallet-gate").hidden = true;
         $("wallet-eligible").textContent = `balance check failed (${err instanceof Error ? err.message : String(err)}) — you can still vote; peers do their own read`;
     } finally {
         // A wallet switch mid-read means a newer renderEligibility owns the button now.
@@ -760,17 +766,9 @@ async function renderEligibility(address: `0x${string}`) {
     }
 }
 
-/**
- * Translate a peer-side eviction verdict into something actionable.
- *
- * There is nothing to translate any more: the rule states its own reason ("this wallet holds none
- * of the gate token …"), the library carries it through to `verdict.reason`, and it is already
- * written for the voter. This only strips the pipeline's `not admitted: ` prefix and names the
- * board. Do not add rule-specific special cases here — that is what went stale last time.
- */
+/** The peer-side rejection message; the wording (and its per-rule list) lives in eligibility-view.ts. */
 function explainEviction(entry: DirEntry, err: VoteEvictedError): string {
-    const reason = err.verdict.reason.replace(/^not admitted: /, "");
-    return `Your /${entry.code}/ vote was rejected: ${reason}.`;
+    return describeEviction(entry.code, err.verdict);
 }
 
 
