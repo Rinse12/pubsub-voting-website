@@ -213,7 +213,11 @@ contests; before it, contest
 holding ≥ 1 BSO (`0xB50cea4c109dc223A10d44c14f521CaeD91DaB5A`) via a vendored
 `erc20-balance` rule; `bso-board-vote-test-2` dropped the gate to get more testers;
 `bso-board-vote-test-3` marks the fork forced by the 0.1.x criteria schema (`rpcUrls`
-removed from the document re-derives the topic regardless).
+removed from the document re-derives the topic regardless). The directory contests kept
+their `contestId`s across two later forks and simply moved topics: the 0.2.0 cutover to
+the soulbound `erc5192-min-balance` gate, and the 0.5.0 one (`rule` → the `gate` tree,
+`requires.chains` → `bucketChainId`, no per-rule `chain`) — three document changes
+shipped together because each re-CIDs every document on its own.
 
 ## Local development
 
@@ -277,8 +281,10 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
   as-is, since a made-up board key provably has no community record. The Benchmarks
   panel times the node boot, the leaderboard (join + restore, and first votes), and the
   community load (from leaderboard-ready).
-- **RPC URLs are client-local, not consensus bytes**: since pubsub-voting 0.1.x the
-  criteria document pins only `chains: { eth: { chainId: 1 } }`; `ETH_RPC_URLS` is each
+- **RPC URLs are client-local, not consensus bytes**: since pubsub-voting 0.5.0 the
+  criteria document pins only `bucketChainId: 84532` — the contest's one clock, named
+  once by numeric id, with no ticker and no per-rule chain; `BASE_SEPOLIA_RPC_URLS` and
+  `ETH_RPC_URLS` are each
   client's own transport config, swappable without forking the topic. They must be
   CORS-enabled (browsers call them directly). The chain itself is still
   consensus-critical: it's where every peer samples bucket blocks, the ballot chainId,
