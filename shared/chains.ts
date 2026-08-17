@@ -4,9 +4,10 @@ import type { ChainClient, ChainClientFactory } from "@bitsocial/pubsub-voting";
 import { BASE_SEPOLIA_RPC_URLS, ETH_RPC_URLS } from "./contests.js";
 
 /**
- * ChainClientFactory for PubsubVoter. Since pubsub-voting 0.1.x the criteria names chains
- * by ticker + chainId only and the RPC endpoints are this client's own configuration. The
- * contest requires Base Sepolia (bucket blocks + 5chan Pass balanceOf gate reads), so the
+ * ChainClientFactory for PubsubVoter. Since pubsub-voting 0.5.0 a contest names its chain
+ * once, as the numeric `criteria.bucketChainId` — there is no ticker anywhere in the
+ * document — and the RPC endpoints are this client's own configuration. The contests count
+ * in Base Sepolia (bucket blocks + 5chan Pass gate reads), so the
  * factory maps chainId 84532 to a viem PublicClient over BASE_SEPOLIA_RPC_URLS with
  * automatic fallback; mainnet stays available for contests that need it. One memoized
  * client per chain per process, as the voter's read coalescer expects; both viem chain

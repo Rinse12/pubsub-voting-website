@@ -25,9 +25,9 @@ export const ETH_RPC_URLS = ["https://ethereum-rpc.publicnode.com", "https://eth
  * Public, CORS-enabled Base Sepolia RPCs (both verified to serve archive state, which
  * pinned bucket-block balanceOf reads need). Client-local transport configuration — NOT
  * part of the criteria bytes: these feed the chain-client factory (shared/chains.ts).
- * `requires.chains.baseSepolia` is where every peer samples the bucket block, reads the
- * 5chan Pass gate balance, binds the chainId into each EIP-712 ballot, and takes the
- * tally's tie-break block hash.
+ * `bucketChainId` (84532) is the contest's one clock — where every peer samples the bucket
+ * block, reads the 5chan Pass gate balance, binds the chainId into each EIP-712 ballot, and
+ * takes the tally's tie-break block hash.
  */
 export const BASE_SEPOLIA_RPC_URLS = ["https://sepolia.base.org", "https://base-sepolia.drpc.org"] as const;
 
