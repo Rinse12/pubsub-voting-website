@@ -33,18 +33,23 @@ const DEFAULTS_URL =
 const defaults = {
     voteSchema: { min: 1, max: 1 },
     maxVotesPerAddress: 1,
+    // The chain this contest counts in: bucket boundaries, each ballot's blockNumber, the block
+    // every rule is handed, and the EIP-712 domain are all this chain. Named once, by id — a rule
+    // does not carry a `chain` option, it reads this one.
+    bucketChainId: 84532,
     blocksPerBucket: 1800,
     voteExpiryBuckets: 720,
-    rule: {
-        type: "erc5192-min-balance",
-        chain: "baseSepolia",
-        contract: "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
-        min: 1
+    // Who may vote: a boolean tree over rule refs. One rule is the wrapped leaf.
+    gate: {
+        rule: {
+            type: "erc5192-min-balance",
+            contract: "0xA8e0155E0e7d014EAF3917982db6a9A4dF98C852",
+            min: 1
+        }
     },
     weight: { type: "constant", value: 1 },
     requires: {
-        rules: ["erc5192-min-balance", "constant"],
-        chains: { baseSepolia: { chainId: 84532 } }
+        rules: ["erc5192-min-balance", "constant"]
     }
 };
 

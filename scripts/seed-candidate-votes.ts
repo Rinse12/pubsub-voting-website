@@ -18,9 +18,8 @@ import {
     type VoteSigner,
     type Criteria
 } from "@bitsocial/pubsub-voting";
-import { erc721Abi } from "viem";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
-import { allCriteria, directoryCodeOf, sharedRules, SECONDS_PER_BLOCK } from "../shared/contests.js";
+import { allCriteria, directoryCodeOf, sharedRules } from "../shared/contests.js";
 import { chainClientFactory } from "../shared/chains.js";
 import { makeNameResolvers } from "../shared/resolvers.js";
 
@@ -30,10 +29,11 @@ import { makeNameResolvers } from "../shared/resolvers.js";
  * pubsub and verified by every peer; nothing is imported into the tally out-of-band.
  *
  * The signing wallet lives in .vote-seed-wallet.json (gitignored; generated once) and
- * must hold a 5chan Pass: the script WAITS until the Pass is visible at the current
- * voting window's boundary block (a Pass airdropped mid-window only counts from the
- * next ~1 h window — publishing earlier would just get the vote evicted by every peer),
- * then publishes one vote per directory and verifies a sample of tallies converged.
+ * must hold a 5chan Pass: the script WAITS until `contest.checkEligibility` says the
+ * contest's own gate admits the wallet, then publishes one vote per directory and
+ * verifies a sample of tallies converged. It does not read any balance itself — which
+ * block the gate reads at is the rule's business (today: the head first, so a Pass
+ * airdropped mid-window counts immediately).
  *
  * One wallet gets ONE vote per contest (maxVotesPerAddress 1, last-write-wins), so a
  * directory with several registered candidates (/biz/, /pol/) gets a vote for its
@@ -79,46 +79,7 @@ const wallet = JSON.parse(readFileSync(walletFile, "utf8")) as { address: `0x${s
 const account = privateKeyToAccount(wallet.privateKey);
 log(`seed wallet: ${account.address}`);
 
-/* ---------- 1. wait until the wallet passes the gate at the WINDOW block ---------- */
-const chain = chainClientFactory({ chain: "baseSepolia", chainId: 84532 });
-if (!chain) throw new Error("no Base Sepolia chain client configured");
-const gate = sharedRules.rule as unknown as { contract: `0x${string}`; min: number };
-const balanceAt = (blockNumber?: number) =>
-    chain.readContract({
-        address: gate.contract,
-        abi: erc721Abi,
-        functionName: "balanceOf",
-        args: [account.address],
-        ...(blockNumber === undefined ? {} : { blockNumber: BigInt(blockNumber) })
-    }) as Promise<bigint>;
-
-const gateDeadline = Date.now() + gateTimeoutH * 3600_000;
-for (;;) {
-    // A transient RPC failure must never kill a poll that may run for hours — log it
-    // and try again next tick.
-    try {
-        const head = Number(await chain.getBlockNumber());
-        const sampleBlock = Math.floor(head / sharedRules.blocksPerBucket) * sharedRules.blocksPerBucket;
-        const [sampled, latest] = await Promise.all([balanceAt(sampleBlock), balanceAt()]);
-        if (sampled >= BigInt(gate.min)) {
-            log(`gate PASSES: balance ${sampled} at window block ${sampleBlock} — publishing votes`);
-            break;
-        }
-        if (latest >= BigInt(gate.min)) {
-            const nextBlock = sampleBlock + sharedRules.blocksPerBucket;
-            const minutes = Math.round(((nextBlock - head) * SECONDS_PER_BLOCK) / 60);
-            log(`Pass received (balance ${latest}) but AFTER window block ${sampleBlock} — waiting for the next window at block ${nextBlock} (~${minutes} min)`);
-        } else {
-            log(`waiting for the 5chan Pass airdrop to ${account.address} (balance 0 at head ${head})…`);
-        }
-    } catch (err) {
-        log(`gate poll failed (retrying next tick): ${(err as Error).message?.split("\n")[0]}`);
-    }
-    if (Date.now() > gateDeadline) throw new Error(`gate never passed within ${gateTimeoutH} h — rerun after the airdrop`);
-    await sleep(gatePollS * 1000);
-}
-
-/* ---------- 2. the candidate board per directory (lists repo, first-registered) ---------- */
+/* ---------- 1. the candidate board per directory (lists repo, first-registered) ---------- */
 interface Board {
     address: string;
     publicKey: string;
@@ -140,7 +101,7 @@ for (const { code, alsoRegistered } of picks)
     for (const other of alsoRegistered)
         log(`note: /${code}/ also registers ${other.address} — one wallet votes once per directory, so it gets NO vote from this wallet`);
 
-/* ---------- 3. a real voter node, meshed through the production seeder ---------- */
+/* ---------- 2. a real voter node, meshed through the production seeder ---------- */
 const libp2p = await createLibp2p({
     transports: [tcp(), webSockets()],
     connectionEncrypters: [noise()],
@@ -168,6 +129,36 @@ const waitForSubscriber = async (topic: string) => {
     while (pubsub.getSubscribers(topic).length === 0 && Date.now() < deadline) await sleep(200);
     return pubsub.getSubscribers(topic).length > 0;
 };
+
+/* ---------- 3. wait until the wallet passes the contest's own gate ---------- */
+// This used to read `balanceOf` itself, twice — at head and at the voting window's boundary
+// block — and hold the votes back until the Pass was visible at the boundary. That was a copy
+// of the gate rule's block choice living outside the rule, and it went stale exactly as the
+// site's did: the v1 gate reads the HEAD first, so a Pass acquired mid-window votes
+// immediately and there is no next window to wait for. Ask the contest instead — it runs the
+// real gate through the real verify context and answers in the rule's own words. Any contest
+// answers for all of them: they share one gate, and the library namespaces the memo by rule.
+const gateContest = await voter.createContest({ criteria: sharedRules });
+const gateDeadline = Date.now() + gateTimeoutH * 3600_000;
+for (;;) {
+    // A transient RPC failure must never kill a poll that may run for hours — log it
+    // and try again next tick.
+    try {
+        const check = await gateContest.checkEligibility({ address: account.address });
+        if (check.eligible) {
+            log(`gate PASSES (score ${check.score}) — publishing votes`);
+            break;
+        }
+        // The rule's own wording, rendered verbatim: this script knows nothing about
+        // contracts, thresholds or blocks any more.
+        log(`waiting for the 5chan Pass airdrop to ${account.address}: ${check.error}`);
+    } catch (err) {
+        log(`gate poll failed (retrying next tick): ${(err as Error).message?.split("\n")[0]}`);
+    }
+    if (Date.now() > gateDeadline) throw new Error(`gate never passed within ${gateTimeoutH} h — rerun after the airdrop`);
+    await sleep(gatePollS * 1000);
+}
+await gateContest.stop();
 
 /* ---------- 4. publish one vote per directory ---------- */
 const failures: string[] = [];
