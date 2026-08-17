@@ -10,7 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/router-fault-tolerance.test.ts",
+    "test": "node tests/router-fault-tolerance.test.ts && tsx tests/eligibility-view.test.ts",
     "topic": "tsx scripts/derive-topic.ts",
     "manifest": "tsx scripts/generate-directory-manifest.ts"
   },

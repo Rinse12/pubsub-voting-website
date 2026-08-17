@@ -292,6 +292,19 @@ tab) will drop the ballot at the gate — which is itself a useful thing to test
 - **Board names are dangerous**: a vote carrying a `.bso` name is dropped by peers unless
   the name resolves on-chain to the claimed public key. The UI warns accordingly; plain
   public-key votes are always safe.
+- **Eligibility is the library's answer, rendered per rule.** `contest.checkEligibility()`
+  returns one entry per rule in the gate plus the gate tree itself, and
+  [src/eligibility-view.ts](src/eligibility-view.ts) draws it as a checklist keyed by each
+  rule's **position** (`leaf`) — `type` and `ruleId` can each repeat within one gate. Three
+  states per row, not two: satisfied, not satisfied, and **unknown** (that rule's chain read
+  failed and the gate was decided without it), the last rendered as unknown and never as a
+  missing requirement. A rule that failed inside a *satisfied* `any` is shown muted rather
+  than red — it is not in the library's blame set, and telling a wallet admitted as a
+  moderator to go and buy a Pass would be worse than silence. The checklist is hidden for a
+  single-rule gate, which is all these contests ship today, so its shapes are covered by
+  [tests/eligibility-view.test.ts](tests/eligibility-view.test.ts) instead of by the running
+  app. Nothing in it knows a contract, a threshold or a block: every sentence about a
+  failure is the rule's own.
 - **Republishing is the client's job** (upstream design): the seeder cannot do it for you
   — it doesn't hold your key, and the library deliberately publishes once and leaves the
   schedule to its host (`republishIntervalBuckets` is the hint it offers). So the site
