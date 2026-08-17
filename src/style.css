@@ -150,6 +150,16 @@ td .status-pending { color: var(--warn); }
 .badge-bad { color: var(--bad); }
 .badge-warn { color: var(--warn); }
 
+/* eligibility: the per-rule gate breakdown under the badge (one row per leaf, nested by all/any) */
+#wallet-gate { margin-top: 0.35rem; font-size: 0.85rem; }
+ul.gate-tree { list-style: none; margin: 0; padding: 0; }
+ul.gate-tree ul.gate-tree { padding-left: 1.1rem; border-left: 1px solid var(--border); margin-left: 0.35rem; }
+ul.gate-tree li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem; padding: 0.15rem 0; }
+ul.gate-tree li > ul.gate-tree { flex-basis: 100%; }
+.gate-mark { flex: none; width: 1rem; text-align: center; font-weight: 600; cursor: help; }
+.gate-op { color: var(--muted); text-transform: lowercase; }
+.gate-why { color: var(--muted); overflow-wrap: anywhere; }
+
 /* wallet card: the "keep your votes alive" controls */
 #wallet-card h3 { margin: 1.5rem 0 0.4rem; font-size: 0.95rem; color: var(--text); }
 .check { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.9rem; }
