@@ -487,6 +487,7 @@ function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
     const peersWrap = $<HTMLDetailsElement>("my-vote-peers-wrap");
     const settlement = settlementOf(entry, stored);
     status.className = "";
+    status.onclick = null;
     peersWrap.hidden = settlement.kind !== "kept";
 
     if (settlement.kind === "unknown") {
@@ -507,15 +508,20 @@ function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
     }
     if (settlement.kind === "counted") {
         status.innerHTML =
-            `<span class="status-ok">counted by this browser</span> — your ballot passed the gate check here, so it ` +
+            `<span class="status-ok">counted by our node</span> — your ballot passed the gate check here, so it ` +
             `will count on any peer it reaches. No peer has confirmed holding it yet — that shows below once one does.`;
         return;
     }
     const { peers } = settlement;
+    status.className = "clickable";
     status.innerHTML =
         `<span class="status-ok">counted, and kept by ${peers.length} peer${peers.length === 1 ? "" : "s"}</span> — ` +
-        `verified here, and served back to us in someone else's checkpoint.`;
-    $("my-vote-peers-summary").textContent = `Peers serving your vote (${peers.length}) — click to see which`;
+        `verified by our node, and served back to us in someone else's checkpoint. <span class="hint">(click for the list)</span>`;
+    // The count IS the affordance: clicking the status opens the same list the summary does.
+    status.onclick = () => {
+        peersWrap.open = !peersWrap.open;
+    };
+    $("my-vote-peers-summary").textContent = `Peers serving your vote (${peers.length})`;
     const list = $("my-vote-peers");
     list.textContent = "";
     for (const peer of peers) {
@@ -530,6 +536,23 @@ function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
             tag.textContent = " (the seeder)";
             li.appendChild(tag);
         }
+        // The addrs we actually hold this peer on, same shape as the connected-peers panel. A
+        // peer that served us a checkpoint and has since gone is still real evidence — it just
+        // has no live address to show.
+        const addrs = addrsForPeer(peer);
+        if (addrs.length === 0) {
+            const none = document.createElement("span");
+            none.className = "peer-addr";
+            none.textContent = "not connected right now";
+            li.appendChild(none);
+        } else {
+            for (const addr of addrs) {
+                const span = document.createElement("span");
+                span.className = "peer-addr";
+                span.textContent = addr;
+                li.appendChild(span);
+            }
+        }
         list.appendChild(li);
     }
 }
@@ -539,6 +562,19 @@ function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
  * re-vote looks like it did nothing. Says WHAT the publish did to your standing ballot
  * (cast / moved / re-published / withdrawn). Only for publishes the user initiated — the
  * background re-publish already reports through the "Last re-published" row. */
+/**
+ * The running libp2p node, for looking up the multiaddrs behind a peer id (the "Your vote" peer
+ * list). Set once at boot; the node itself is owned by pkc-js.
+ */
+let libp2pNode: { getConnections(): Array<{ remotePeer: { toString(): string }; remoteAddr: { toString(): string } }> } | undefined;
+
+/** Every multiaddr we currently hold a connection to `peerId` on; empty if not connected now. */
+function addrsForPeer(peerId: string): string[] {
+    return (libp2pNode?.getConnections() ?? [])
+        .filter((conn) => conn.remotePeer.toString() === peerId)
+        .map((conn) => conn.remoteAddr.toString());
+}
+
 let voteConfirmTimer: ReturnType<typeof setTimeout> | undefined;
 function hideVoteConfirm() {
     clearTimeout(voteConfirmTimer);
@@ -1398,6 +1434,7 @@ async function main() {
         helia.libp2p.addEventListener("connection:open", (evt: CustomEvent<{ remotePeer: unknown }>) => tryHint(evt.detail.remotePeer));
         for (const connection of helia.libp2p.getConnections()) tryHint(connection.remotePeer);
     }
+    libp2pNode = helia.libp2p as unknown as typeof libp2pNode;
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
         const connections = helia.libp2p.getConnections();
