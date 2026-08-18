@@ -220,3 +220,11 @@ ul.gate-tree li > ul.gate-tree { flex-basis: 100%; }
 .peer-list code {
     font-size: 0.85em;
 }
+
+/* The "kept by N peers" status doubles as the toggle for its peer list. */
+.clickable {
+    cursor: pointer;
+}
+.clickable:hover .status-ok {
+    text-decoration: underline;
+}
