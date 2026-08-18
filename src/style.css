@@ -206,3 +206,17 @@ ul.gate-tree li > ul.gate-tree { flex-basis: 100%; }
 .peer-list { list-style: none; margin: 0; padding: 0; font-size: 0.78rem; }
 .peer-list li { padding: 0.3rem 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
 .peer-list .peer-addr { color: var(--muted); display: block; }
+
+/* Peer ids serving your vote back to you (the "Your vote" panel's expandable list). */
+.peer-list {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+    list-style: disc;
+}
+.peer-list li {
+    margin: 0.15rem 0;
+    word-break: break-all;
+}
+.peer-list code {
+    font-size: 0.85em;
+}
