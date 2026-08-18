@@ -114,10 +114,10 @@ const libp2p = await createLibp2p({
     }
 });
 const helia = await createHelia({ libp2p });
+const signer = new KeySigner(account);
 const voter = new PubsubVoter({
     helia,
     chains: chainClientFactory,
-    signer: new KeySigner(account),
     nameResolvers: makeNameResolvers()
 });
 await libp2p.dial(multiaddr(seederAddr));
@@ -167,7 +167,7 @@ for (const { criteria, code, board } of picks) {
     const named = board.address !== board.publicKey;
     const community = named ? { publicKey: board.publicKey, name: board.address } : { publicKey: board.publicKey };
     try {
-        const vote = await voter.createContestVote({ criteria, votes: [{ community, vote: 1 }] });
+        const vote = await voter.createContestVote({ criteria, votes: [{ community, vote: 1 }], signer });
         if (!(await waitForSubscriber(vote.topic))) throw new Error("seeder never showed as topic subscriber");
         try {
             const { recipientCount } = await vote.publish();
@@ -178,7 +178,11 @@ for (const { criteria, code, board } of picks) {
             // The claimed .bso name provably doesn't resolve to this key — the registry
             // entry is stale/wrong. The board can still be voted by its bare key.
             log(`/${code}/ name ${board.address} failed resolution (${(err as Error).message}) — voting by public key only`);
-            const bare = await voter.createContestVote({ criteria, votes: [{ community: { publicKey: board.publicKey }, vote: 1 }] });
+            const bare = await voter.createContestVote({
+                criteria,
+                votes: [{ community: { publicKey: board.publicKey }, vote: 1 }],
+                signer
+            });
             const { recipientCount } = await bare.publish();
             published++;
             log(`/${code}/ voted for ${board.publicKey} (${recipientCount} direct recipient(s))`);

@@ -61,13 +61,18 @@ export async function startPkcNode(): Promise<{ pkc: Pkc; helia: HeliaWithLibp2p
  * queries ONE CID, rotating through the set, so a seeder that only announces a subset
  * of the directories is still found within a few rounds.
  */
+/**
+ * Every peer the routers have EVER named as a provider of a contest's criteria CID — i.e. the
+ * seeders, as far as this tab can tell. Module-scoped so the UI can label a peer id it meets
+ * elsewhere (the checkpoint-attribution list) as "the seeder" rather than as an opaque
+ * `12D3KooW…`. Only ever added to, matching the connection check below.
+ */
+export const seederPeerIds = new Set<string>();
+
 export function keepSeederConnected(
     helia: HeliaWithLibp2pPubsub,
     onChange: (connected: boolean, error?: Error) => void
 ): () => void {
-    // Every peer the routers have EVER returned for this contest: a connection to any
-    // of them counts as "connected", even after the router entry's TTL lapses.
-    const seederPeerIds = new Set<string>();
 
     const isConnected = () =>
         helia.libp2p.getConnections().some((c) => seederPeerIds.has(c.remotePeer.toString()));
