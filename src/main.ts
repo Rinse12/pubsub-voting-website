@@ -803,7 +803,9 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
     }
     publishing = true;
     try {
-        const vote = await voter.createContestVote({ criteria: entry.criteria, votes });
+        // The signer belongs to the ballot, not the voter (0.6.0): this tab can hold a burner
+        // and an injected wallet at once, and each publish names which one signs it.
+        const vote = await voter.createContestVote({ criteria: entry.criteria, votes, signer });
         vote.on("publishingstatechange", (state: string) => log(`/${entry.code}/ publishing state: ${state}`));
         // Post-hoc rejection feedback: fires AFTER publish() resolved if a deferred check
         // (background gate read / name resolution) evicts this vote. The contest-level
@@ -1464,7 +1466,6 @@ async function main() {
     voter = new PubsubVoter({
         helia,
         chains: chainClientFactory,
-        signer,
         nameResolvers: makeNameResolvers()
     });
 
