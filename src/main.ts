@@ -501,14 +501,14 @@ function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
     if (settlement.kind === "published") {
         status.className = "status-pending";
         status.innerHTML =
-            `<span class="status-pending">published — not counted yet.</span> Broadcast and waiting on the ` +
+            `<span class="status-pending">published — not counted anywhere yet.</span> Broadcast and waiting on the ` +
             `gate read; peers give a publisher no acknowledgement, so this is not a claim that anyone accepted it.`;
         return;
     }
     if (settlement.kind === "counted") {
         status.innerHTML =
-            `<span class="status-ok">counted</span> — this node ran the gate at your ballot's block and it passed. ` +
-            `Every honest peer runs the identical check.`;
+            `<span class="status-ok">counted by this browser</span> — your ballot passed the gate check here, so it ` +
+            `will count on any peer it reaches. No peer has confirmed holding it yet — that shows below once one does.`;
         return;
     }
     const { peers } = settlement;
