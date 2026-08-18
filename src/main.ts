@@ -23,10 +23,10 @@ import {
     parseRootRecord,
     type DownloadedBundle
 } from "../shared/wire-log.js";
-import { startPkcNode, keepSeederConnected, type Pkc } from "./node.js";
+import { startPkcNode, keepSeederConnected, seederPeerIds, type Pkc } from "./node.js";
 import { PREWARM_HINT_FETCH_KEY, PREWARM_HINT_TIMEOUT_MS, PREWARM_HINT_MAX_PEERS, PREWARM_HINT_MAX_ADDRS } from "./config.js";
 import { multiaddr } from "@multiformats/multiaddr";
-import type { CID } from "multiformats/cid";
+import { CID } from "multiformats/cid";
 import { BrowserWalletSigner } from "./signer.js";
 
 /* ---------- tiny DOM helpers ---------- */
@@ -102,7 +102,71 @@ interface StoredVote {
     /** epoch ms of the most recent (re-)publish — what expiry actually counts from. Absent on
      * records written before auto re-publishing existed; those fall back to `at`. */
     refreshedAt?: number;
+    /**
+     * The bundle CID of the latest publish. This is the whole reason a reloaded tab can still say
+     * anything true about a vote: the `ContestVote` that published it died with the page, but the
+     * contest still holds the bundle and answers `checksFor` / `checkpointPeersFor` for this CID.
+     * Absent on records written before settlement tracking existed — those render as unknown
+     * rather than as counted, and the next re-publish fills it in.
+     */
+    cid?: string;
 }
+
+/**
+ * What we can honestly say about a stored vote right now, asked of the library rather than
+ * remembered by us. Deliberately derived and never persisted: a cached "counted" would outlive
+ * the fact, and the fact is exactly what a reloaded tab cannot know on its own.
+ *
+ *   - `unknown`   — no CID recorded (a pre-upgrade record), so there is nothing to ask about.
+ *   - `gone`      — the contest is not holding this bundle: evicted, expired, or not yet admitted.
+ *   - `published` — held, deferred checks still outstanding. Broadcast, not counted.
+ *   - `counted`   — every deferred check on THIS bundle settled clean.
+ *   - `kept`      — counted, and at least one peer served it back to us in their checkpoint.
+ */
+type VoteSettlement =
+    | { kind: "unknown" }
+    | { kind: "gone" }
+    | { kind: "published" }
+    | { kind: "counted" }
+    | { kind: "kept"; peers: string[] };
+
+function settlementOf(entry: DirEntry, stored: StoredVote): VoteSettlement {
+    const contest = entry.contest;
+    if (!contest || stored.cid === undefined) return { kind: "unknown" };
+    let cid: CID;
+    try {
+        cid = CID.parse(stored.cid);
+    } catch {
+        return { kind: "unknown" };
+    }
+    const checks = contest.checksFor(cid);
+    if (checks === undefined) return { kind: "gone" };
+    if (!checks.chainVerified || checks.nameResolved === false) return { kind: "published" };
+    const peers = contest.checkpointPeersFor(cid);
+    return peers.length > 0 ? { kind: "kept", peers } : { kind: "counted" };
+}
+/**
+ * Tell `entry`'s contest which bundle this browser published, so peer-checkpoint attribution can
+ * start tracking it again.
+ *
+ * Needed only after a restart. Within one session the publish registers itself, but the engine
+ * cannot recognise a bundle it did not sign — the signer belongs to the ballot, not the contest,
+ * so a bundle restored from the snapshot looks like any other wallet's. Attribution then runs
+ * forward from this call, which is why it happens at join rather than lazily at first render.
+ */
+function trackStoredVote(entry: DirEntry) {
+    const address = signer.connectedAddress;
+    if (!entry.contest || !address) return;
+    const stored = loadMyVote(entry, address);
+    if (stored?.cid === undefined) return;
+    try {
+        entry.contest.trackOwnBundle(CID.parse(stored.cid));
+    } catch {
+        // A malformed CID in storage is not worth failing a join over; the record simply renders
+        // as unknown until the next re-publish rewrites it.
+    }
+}
+
 /** The publish that decides this vote's expiry: its latest one. */
 const lastPublishedAt = (stored: StoredVote) => stored.refreshedAt ?? stored.at;
 const myVoteKey = (entry: DirEntry, address: string) => `bso-vote:${entry.topic}:${address.toLowerCase()}`;
@@ -407,6 +471,90 @@ function renderMyVote() {
     $("my-vote-refreshed").hidden = refreshed === stored.at;
     $("my-vote-refreshed").textContent = new Date(refreshed).toLocaleString();
     $("my-vote-expiry").textContent = `≈ ${new Date(refreshed + VOTE_LIFETIME_MS).toLocaleString()}`;
+    renderVoteSettlement(selected!, stored);
+}
+
+/**
+ * Say what is actually known about this ballot, in the library's terms rather than ours.
+ *
+ * The distinction the whole panel exists for: publishing a vote and having it counted are
+ * different events, separated by a chain read that can also come back "no". Until 0.6.0 a client
+ * could not tell them apart for its OWN bundle, so this said "cast" the moment publish() resolved
+ * — which is a lie for an ineligible wallet, and one that survived until an eviction arrived.
+ */
+function renderVoteSettlement(entry: DirEntry, stored: StoredVote) {
+    const status = $("my-vote-status");
+    const peersWrap = $<HTMLDetailsElement>("my-vote-peers-wrap");
+    const settlement = settlementOf(entry, stored);
+    status.className = "";
+    status.onclick = null;
+    peersWrap.hidden = settlement.kind !== "kept";
+
+    if (settlement.kind === "unknown") {
+        status.textContent = "unknown — this record predates settlement tracking; it resolves on the next re-publish";
+        return;
+    }
+    if (settlement.kind === "gone") {
+        status.className = "status-pending";
+        status.textContent = "not held by this node — still syncing, or the ballot expired";
+        return;
+    }
+    if (settlement.kind === "published") {
+        status.className = "status-pending";
+        status.innerHTML =
+            `<span class="status-pending">published — not counted anywhere yet.</span> Broadcast and waiting on the ` +
+            `gate read; peers give a publisher no acknowledgement, so this is not a claim that anyone accepted it.`;
+        return;
+    }
+    if (settlement.kind === "counted") {
+        status.innerHTML =
+            `<span class="status-ok">counted by our node</span> — your ballot passed the gate check here, so it ` +
+            `will count on any peer it reaches. No peer has confirmed holding it yet — that shows below once one does.`;
+        return;
+    }
+    const { peers } = settlement;
+    status.className = "clickable";
+    status.innerHTML =
+        `<span class="status-ok">counted, and kept by ${peers.length} peer${peers.length === 1 ? "" : "s"}</span> — ` +
+        `verified by our node, and served back to us in someone else's checkpoint. <span class="hint">(click for the list)</span>`;
+    // The count IS the affordance: clicking the status opens the same list the summary does.
+    status.onclick = () => {
+        peersWrap.open = !peersWrap.open;
+    };
+    $("my-vote-peers-summary").textContent = `Peers serving your vote (${peers.length})`;
+    const list = $("my-vote-peers");
+    list.textContent = "";
+    for (const peer of peers) {
+        const li = document.createElement("li");
+        const code = document.createElement("code");
+        code.textContent = peer;
+        code.title = peer;
+        li.appendChild(code);
+        if (seederPeerIds.has(peer)) {
+            const tag = document.createElement("span");
+            tag.className = "status-ok";
+            tag.textContent = " (the seeder)";
+            li.appendChild(tag);
+        }
+        // The addrs we actually hold this peer on, same shape as the connected-peers panel. A
+        // peer that served us a checkpoint and has since gone is still real evidence — it just
+        // has no live address to show.
+        const addrs = addrsForPeer(peer);
+        if (addrs.length === 0) {
+            const none = document.createElement("span");
+            none.className = "peer-addr";
+            none.textContent = "not connected right now";
+            li.appendChild(none);
+        } else {
+            for (const addr of addrs) {
+                const span = document.createElement("span");
+                span.className = "peer-addr";
+                span.textContent = addr;
+                li.appendChild(span);
+            }
+        }
+        list.appendChild(li);
+    }
 }
 
 /* ---------- post-publish confirmation cue ----------
@@ -414,6 +562,19 @@ function renderMyVote() {
  * re-vote looks like it did nothing. Says WHAT the publish did to your standing ballot
  * (cast / moved / re-published / withdrawn). Only for publishes the user initiated — the
  * background re-publish already reports through the "Last re-published" row. */
+/**
+ * The running libp2p node, for looking up the multiaddrs behind a peer id (the "Your vote" peer
+ * list). Set once at boot; the node itself is owned by pkc-js.
+ */
+let libp2pNode: { getConnections(): Array<{ remotePeer: { toString(): string }; remoteAddr: { toString(): string } }> } | undefined;
+
+/** Every multiaddr we currently hold a connection to `peerId` on; empty if not connected now. */
+function addrsForPeer(peerId: string): string[] {
+    return (libp2pNode?.getConnections() ?? [])
+        .filter((conn) => conn.remotePeer.toString() === peerId)
+        .map((conn) => conn.remoteAddr.toString());
+}
+
 let voteConfirmTimer: ReturnType<typeof setTimeout> | undefined;
 function hideVoteConfirm() {
     clearTimeout(voteConfirmTimer);
@@ -426,7 +587,7 @@ function showVoteConfirm(votes: Vote[], previous: StoredVote | undefined) {
     let message: string;
     if (!target)
         message = previous
-            ? `Vote withdrawn — your vote for ${nameOf(previous)} no longer counts.`
+            ? `Withdrawal published for your ${nameOf(previous)} vote — confirming that peers drop it.`
             : "Withdrawal published — this wallet has no standing vote here.";
     else if (sameBallot)
         message =
@@ -436,7 +597,10 @@ function showVoteConfirm(votes: Vote[], previous: StoredVote | undefined) {
         message =
             `Vote moved from ${nameOf(previous)} to ${nameOf(target)} — one ballot per wallet, ` +
             `so your earlier vote no longer counts.`;
-    else message = `Vote cast for ${nameOf(target)}.`;
+    // "published", not "cast": at this instant the ballot is signed and broadcast and nothing
+    // more — an ineligible wallet reaches exactly this point. The panel below reports what
+    // becomes of it.
+    else message = `Vote published for ${nameOf(target)} — see “Your vote” below for whether it counts.`;
     const confirm = $("vote-confirm");
     confirm.textContent = `✓ ${message}`;
     confirm.hidden = false;
@@ -690,6 +854,9 @@ function renderWallet(address: `0x${string}`) {
     void renderEligibility(address);
     renderMyVote();
     renderRepublish(); // which votes are held (and whether signing pops up) is per-wallet
+    // Records are keyed per wallet, so a wallet arriving (or switching) after the joins is the
+    // other moment attribution has to be re-armed — the joins only saw the previous address.
+    for (const entry of entries) trackStoredVote(entry);
     void republishVotes(); // this wallet's votes may have gone stale while the tab was closed
     scheduleRenderDirs(); // the "Your vote" column is per-wallet
 }
@@ -803,13 +970,25 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
     }
     publishing = true;
     try {
-        const vote = await voter.createContestVote({ criteria: entry.criteria, votes });
+        // The signer belongs to the ballot, not the voter (0.6.0): this tab can hold a burner
+        // and an injected wallet at once, and each publish names which one signs it.
+        const vote = await voter.createContestVote({ criteria: entry.criteria, votes, signer });
         vote.on("publishingstatechange", (state: string) => log(`/${entry.code}/ publishing state: ${state}`));
         // Post-hoc rejection feedback: fires AFTER publish() resolved if a deferred check
         // (background gate read / name resolution) evicts this vote. The contest-level
         // handler owns the visible wallet-card alert; this keeps the debug log complete.
         vote.on("error", (err: unknown) => log(`/${entry.code}/ vote error: ${err instanceof Error ? err.message : String(err)}`));
-        const { recipientCount } = await vote.publish();
+        const { recipientCount, cid } = await vote.publish();
+        // The verdicts land AFTER publish() resolves, on this object. Re-render the panel as they
+        // do — this is the difference between the UI claiming a vote counted and knowing it did.
+        vote.on("publishingstatechange", (state: string) => {
+            renderMyVote();
+            scheduleRenderDirs();
+            // A withdrawal deletes its own record, so the panel below is gone and this banner is
+            // the only place its verdict can land. An empty ballot faces the same gate as any
+            // other, so "published" is no more final here than it is for a vote.
+            if (votes.length === 0) updateWithdrawalConfirm(state);
+        });
         // Name WHAT was voted for — a log full of anonymous "vote published" lines is
         // useless when several votes fly in one session.
         const votedFor = votes
@@ -837,7 +1016,10 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
                         publicKey: target.publicKey,
                         name: target.name,
                         at: sameBallot ? previous.at : now,
-                        refreshedAt: now
+                        refreshedAt: now,
+                        // A re-publish in a LATER window signs new bytes, so this CID moves; the
+                        // panel must follow it, or it would report on a superseded bundle.
+                        cid: cid.toString()
                     } satisfies StoredVote)
                 );
             }
@@ -860,6 +1042,28 @@ async function castVote(entry: DirEntry, votes: Vote[], { refresh = false } = {}
     } finally {
         publishing = false;
     }
+}
+
+/**
+ * Keep the withdrawal cue honest as its own deferred checks settle. Held open while unsettled —
+ * the gate's grace window is longer than the banner's normal life, so auto-hiding would retire
+ * the message before there is anything to report.
+ */
+function updateWithdrawalConfirm(state: string) {
+    const confirm = $("vote-confirm");
+    if (confirm.hidden) return; // the user moved on; do not resurrect it
+    if (state === "verified-locally" || state === "verified-by-peer") {
+        confirm.textContent = "✓ Withdrawal counted — peers verified it and your vote no longer stands.";
+        clearTimeout(voteConfirmTimer);
+        voteConfirmTimer = setTimeout(hideVoteConfirm, 15_000);
+        return;
+    }
+    if (state === "failed") {
+        confirm.textContent = "✗ Withdrawal rejected — your earlier vote may still be standing. See the wallet card.";
+        clearTimeout(voteConfirmTimer);
+        return;
+    }
+    clearTimeout(voteConfirmTimer); // still settling: outlive the usual 15 s
 }
 
 /* ---------- automatic re-publishing (keeping votes alive) ----------
@@ -1230,6 +1434,7 @@ async function main() {
         helia.libp2p.addEventListener("connection:open", (evt: CustomEvent<{ remotePeer: unknown }>) => tryHint(evt.detail.remotePeer));
         for (const connection of helia.libp2p.getConnections()) tryHint(connection.remotePeer);
     }
+    libp2pNode = helia.libp2p as unknown as typeof libp2pNode;
     $("peer-id").textContent = helia.libp2p.peerId.toString();
     setInterval(() => {
         const connections = helia.libp2p.getConnections();
@@ -1464,7 +1669,6 @@ async function main() {
     voter = new PubsubVoter({
         helia,
         chains: chainClientFactory,
-        signer,
         nameResolvers: makeNameResolvers()
     });
 
@@ -1549,7 +1753,12 @@ async function main() {
                             markBench(`first votes on a leaderboard (/${entry.code}/, ${ranking.length} board(s))`);
                         }
                         scheduleRenderDirs();
-                        if (entry === selected) renderTally();
+                        if (entry === selected) {
+                            renderTally();
+                            // Check settlements and peer attributions both fire `update`, and both
+                            // change what the "Your vote" panel may honestly claim.
+                            renderMyVote();
+                        }
                         // The moment ANY leaderboard has content, its #1 board's community
                         // loads via pkc-js — every contest, not just the selected one — and if
                         // a later vote flips a leader, that contest's community follows it.
@@ -1578,6 +1787,7 @@ async function main() {
                         log(`/${entry.code}/ contest error (retrying): ${err instanceof Error ? err.message : String(err)}`);
                     });
                     await contest.update();
+                    trackStoredVote(entry);
                     entry.joined = true;
                     phase("join-done", entry.code, { tookMs: performance.now() - startedAt });
                 } catch (err) {

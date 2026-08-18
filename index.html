@@ -217,7 +217,18 @@
                         <dd id="my-vote-refreshed" hidden></dd>
                         <dt>Expires</dt>
                         <dd id="my-vote-expiry"></dd>
+                        <dt>Status</dt>
+                        <dd id="my-vote-status"></dd>
                     </dl>
+                    <details id="my-vote-peers-wrap" hidden>
+                        <summary id="my-vote-peers-summary"></summary>
+                        <ul id="my-vote-peers" class="peer-list"></ul>
+                        <p class="hint">
+                            A peer only puts fully verified bundles in its own checkpoint, so each
+                            of these ran the same checks on your ballot and kept it. It is a lower
+                            bound: it counts peers whose checkpoints this tab happened to pull.
+                        </p>
+                    </details>
                     <p class="hint">
                         Votes decay: expiry counts from the last time this ballot was published, so
                         re-voting (or leaving “Keep your votes alive” on in the wallet card) is what
