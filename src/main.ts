@@ -31,6 +31,9 @@ import { BrowserWalletSigner } from "./signer.js";
 
 /* ---------- tiny DOM helpers ---------- */
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
+
+$("pubsub-voting-version").textContent = __PUBSUB_VOTING_VERSION__;
+$("pkc-js-version").textContent = __PKC_JS_VERSION__;
 const logEl = $<HTMLPreElement>("log");
 function log(message: string) {
     const line = `[${new Date().toLocaleTimeString()}] ${message}`;
