@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@bitsocial/bso-resolver": "0.0.10",
-    "@bitsocial/pubsub-voting": "0.6.1",
+    "@bitsocial/pubsub-voting": "0.6.2",
     "@chainsafe/libp2p-noise": "17.0.0",
     "@chainsafe/libp2p-yamux": "8.0.1",
     "@helia/delegated-routing-v1-http-api-client": "6.0.1",
