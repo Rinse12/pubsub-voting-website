@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createLibp2p } from "libp2p";
+
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { noise } from "@chainsafe/libp2p-noise";
@@ -7,7 +7,9 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
 import { gossipsub } from "@libp2p/gossipsub";
 import { fetch as fetchService } from "@libp2p/fetch";
-import { createHelia } from "helia";
+import { createHeliaLight } from "helia";
+import { withLibp2pLight } from "@helia/libp2p";
+import { withBitswap } from "@helia/bitswap";
 import { multiaddr } from "@multiformats/multiaddr";
 import {
     PubsubVoter,
@@ -102,7 +104,9 @@ for (const { code, alsoRegistered } of picks)
         log(`note: /${code}/ also registers ${other.address} — one wallet votes once per directory, so it gets NO vote from this wallet`);
 
 /* ---------- 2. a real voter node, meshed through the production seeder ---------- */
-const libp2p = await createLibp2p({
+// Helia 7 no longer takes a pre-built libp2p instance — compose like the pkc-js host and
+// start; libp2p is created lazily inside start().
+const helia = withBitswap(withLibp2pLight(createHeliaLight(), {
     transports: [tcp(), webSockets()],
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
@@ -112,8 +116,9 @@ const libp2p = await createLibp2p({
         fetch: fetchService(),
         pubsub: gossipsub({ scoreParams: { IPColocationFactorWeight: 0 } })
     }
-});
-const helia = await createHelia({ libp2p });
+}));
+await helia.start();
+const libp2p = helia.libp2p;
 const signer = new KeySigner(account);
 const voter = new PubsubVoter({
     helia,

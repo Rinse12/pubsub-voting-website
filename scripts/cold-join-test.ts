@@ -1,4 +1,3 @@
-import { createLibp2p } from "libp2p";
 import { tcp } from "@libp2p/tcp";
 import { webSockets } from "@libp2p/websockets";
 import { noise } from "@chainsafe/libp2p-noise";
@@ -6,7 +5,9 @@ import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
 import { gossipsub } from "@libp2p/gossipsub";
 import { fetch as fetchService } from "@libp2p/fetch";
-import { createHelia } from "helia";
+import { createHeliaLight } from "helia";
+import { withLibp2pLight } from "@helia/libp2p";
+import { withBitswap } from "@helia/bitswap";
 import { multiaddr } from "@multiformats/multiaddr";
 import { PubsubVoter, topicFor } from "@bitsocial/pubsub-voting";
 import { allCriteria, directoryCodeOf } from "../shared/contests.js";
@@ -42,7 +43,10 @@ if (!criteria) throw new Error(`no directory contest with code "${dirCode}"`);
 const t0 = Date.now();
 const log = (msg: string) => console.log(`[t+${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
 
-const libp2p = await createLibp2p({
+// Helia 7 no longer takes a pre-built libp2p instance — compose the node the way the
+// pkc-js host does (withBitswap(withLibp2pLight(createHeliaLight(), <libp2p options>)))
+// and start it; libp2p is created lazily inside start().
+const helia = withBitswap(withLibp2pLight(createHeliaLight(), {
     transports: [tcp(), webSockets()],
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
@@ -52,8 +56,9 @@ const libp2p = await createLibp2p({
         fetch: fetchService(),
         pubsub: gossipsub({ scoreParams: { IPColocationFactorWeight: 0 } })
     }
-});
-const helia = await createHelia({ libp2p });
+}));
+await helia.start();
+const libp2p = helia.libp2p;
 const voter = new PubsubVoter({
     helia,
     chains: chainClientFactory,
