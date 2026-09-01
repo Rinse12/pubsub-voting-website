@@ -5,6 +5,10 @@
   "description": "Browser voting over libp2p pubsub, gated by an ERC-20 (BSO) balance — web client + AutoTLS seeder node.",
   "type": "module",
   "license": "GPL-3.0-or-later",
+  "packageManager": "npm@11.13.0",
+  "engines": {
+    "npm": ">=11"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
