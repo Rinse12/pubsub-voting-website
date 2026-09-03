@@ -1,0 +1,2012 @@
+[
+  {
+    "label": "pkc-0.0.94",
+    "round": 1,
+    "query": "",
+    "coldMs": 60000,
+    "windowMs": 180000,
+    "coldCpuSec": 11.75,
+    "steadyCpuSec": 15.51,
+    "steadyCpuPct": 8.6,
+    "peakRssMiB": 1230,
+    "endRssMiB": 1101,
+    "rssGrowthMiB": 52,
+    "jsHeapMiB": 71.2,
+    "jsHeapGrowthMiB": 11.3,
+    "rendererTaskSecCold": 5.05,
+    "rendererTaskSecSteady": 5.94,
+    "rendererScriptSecSteady": 0.61,
+    "steadyFetchCalls": 354,
+    "steadyFetchPerMin": 118,
+    "steadyFetch": {
+      "calls": 354,
+      "ok": 193,
+      "aborted": 161,
+      "failed": 0,
+      "bySource": {
+        "pubsub-voting": 0,
+        "pkc-js": 354,
+        "this page": 0,
+        "unknown": 0
+      },
+      "peers": 7,
+      "topPeerCalls": 464,
+      "updateIntervalMs": 60000
+    },
+    "fetchCold": {
+      "total": 137,
+      "bySource": {
+        "pubsub-voting": 26,
+        "pkc-js": 110,
+        "this page": 1,
+        "unknown": 0
+      },
+      "ok": 91,
+      "aborted": 25,
+      "failed": 21,
+      "peers": 7,
+      "updateIntervalMs": 60000,
+      "topPeer": 110
+    },
+    "fetchEnd": {
+      "total": 491,
+      "bySource": {
+        "pubsub-voting": 26,
+        "pkc-js": 464,
+        "this page": 1,
+        "unknown": 0
+      },
+      "ok": 284,
+      "aborted": 186,
+      "failed": 21,
+      "peers": 7,
+      "updateIntervalMs": 60000,
+      "topPeer": 464
+    },
+    "healthCounts": {
+      "buffered": 777,
+      "saturated": false,
+      "windowSpanMs": 19849,
+      "eventsPerSec": 39.1,
+      "communitiesLoaded": 64,
+      "connOpen": 6,
+      "connClose": 0,
+      "joinsDone": 64,
+      "joinsFailed": 0,
+      "tallies": 64,
+      "fetchStart": 0,
+      "subscriptionChange": 5,
+      "byKind": [
+        [
+          "community-state",
+          192
+        ],
+        [
+          "ipns",
+          144
+        ],
+        [
+          "join-start",
+          64
+        ],
+        [
+          "join-done",
+          64
+        ],
+        [
+          "first-tally",
+          64
+        ],
+        [
+          "community-create-start",
+          64
+        ],
+        [
+          "community-created",
+          64
+        ],
+        [
+          "community-loaded",
+          64
+        ]
+      ]
+    },
+    "steadyCounts": {
+      "buffered": 2010,
+      "saturated": false,
+      "windowSpanMs": 236104,
+      "eventsPerSec": 8.5,
+      "communitiesLoaded": 64,
+      "connOpen": 6,
+      "connClose": 0,
+      "joinsDone": 64,
+      "joinsFailed": 0,
+      "tallies": 64,
+      "fetchStart": 0,
+      "subscriptionChange": 5,
+      "byKind": [
+        [
+          "ipns",
+          928
+        ],
+        [
+          "community-state",
+          620
+        ],
+        [
+          "join-start",
+          64
+        ],
+        [
+          "join-done",
+          64
+        ],
+        [
+          "first-tally",
+          64
+        ],
+        [
+          "community-create-start",
+          64
+        ],
+        [
+          "community-created",
+          64
+        ],
+        [
+          "community-loaded",
+          64
+        ]
+      ]
+    },
+    "procs": 8,
+    "pageErrors": [],
+    "samples": [
+      {
+        "tag": "cold",
+        "atMs": 2024,
+        "cpuSec": 1.71,
+        "rssMiB": 964.421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 4035,
+        "cpuSec": 4.56,
+        "rssMiB": 1114.07421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 6045,
+        "cpuSec": 8.01,
+        "rssMiB": 1221.7109375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 8052,
+        "cpuSec": 8.34,
+        "rssMiB": 1229.57421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 10060,
+        "cpuSec": 8.42,
+        "rssMiB": 1228.33203125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 12069,
+        "cpuSec": 8.54,
+        "rssMiB": 1228.7421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 14077,
+        "cpuSec": 8.65,
+        "rssMiB": 1229.6796875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 16087,
+        "cpuSec": 8.88,
+        "rssMiB": 1165.1484375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 18096,
+        "cpuSec": 8.92,
+        "rssMiB": 1165.4140625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 20102,
+        "cpuSec": 8.98,
+        "rssMiB": 1165.64453125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 22117,
+        "cpuSec": 9.07,
+        "rssMiB": 1165.671875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 24127,
+        "cpuSec": 9.15,
+        "rssMiB": 1165.33984375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 26137,
+        "cpuSec": 9.19,
+        "rssMiB": 1164.94921875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 28145,
+        "cpuSec": 9.24,
+        "rssMiB": 1165.17578125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 30155,
+        "cpuSec": 9.49,
+        "rssMiB": 1118.2265625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 32169,
+        "cpuSec": 9.59,
+        "rssMiB": 1033.02734375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 34178,
+        "cpuSec": 9.67,
+        "rssMiB": 1034.89453125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 36186,
+        "cpuSec": 9.72,
+        "rssMiB": 1036.3984375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 38195,
+        "cpuSec": 9.9,
+        "rssMiB": 1036.83203125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 40205,
+        "cpuSec": 9.93,
+        "rssMiB": 1037.8671875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 42215,
+        "cpuSec": 10.07,
+        "rssMiB": 1038.19140625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 44224,
+        "cpuSec": 10.08,
+        "rssMiB": 1038.35546875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 46232,
+        "cpuSec": 10.23,
+        "rssMiB": 1023.53515625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 48241,
+        "cpuSec": 10.25,
+        "rssMiB": 1023.625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 50249,
+        "cpuSec": 10.32,
+        "rssMiB": 1027.328125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 52258,
+        "cpuSec": 10.65,
+        "rssMiB": 1036.0390625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 54266,
+        "cpuSec": 10.86,
+        "rssMiB": 1046.88671875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 56275,
+        "cpuSec": 11.11,
+        "rssMiB": 1048.7890625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 58285,
+        "cpuSec": 11.33,
+        "rssMiB": 1051.97265625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 60293,
+        "cpuSec": 11.75,
+        "rssMiB": 1047.77734375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 62312,
+        "cpuSec": 11.86,
+        "rssMiB": 1048.62890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 64321,
+        "cpuSec": 12.16,
+        "rssMiB": 1044.30859375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 66331,
+        "cpuSec": 12.37,
+        "rssMiB": 1047.35546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 68338,
+        "cpuSec": 12.98,
+        "rssMiB": 1050.87890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 70347,
+        "cpuSec": 13.25,
+        "rssMiB": 1060.4453125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 72357,
+        "cpuSec": 13.58,
+        "rssMiB": 1064.34765625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 74365,
+        "cpuSec": 13.9,
+        "rssMiB": 1067.2265625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 76373,
+        "cpuSec": 14.21,
+        "rssMiB": 1065.68359375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 78382,
+        "cpuSec": 14.33,
+        "rssMiB": 1062.7109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 80390,
+        "cpuSec": 14.5,
+        "rssMiB": 1064.62109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 82398,
+        "cpuSec": 14.55,
+        "rssMiB": 1064.30078125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 84406,
+        "cpuSec": 14.6,
+        "rssMiB": 1064.43359375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 86414,
+        "cpuSec": 14.66,
+        "rssMiB": 1064.6171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 88422,
+        "cpuSec": 14.69,
+        "rssMiB": 1064.37109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 90430,
+        "cpuSec": 14.73,
+        "rssMiB": 1064.609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 92438,
+        "cpuSec": 14.79,
+        "rssMiB": 1064.37109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 94446,
+        "cpuSec": 14.83,
+        "rssMiB": 1064.86328125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 96454,
+        "cpuSec": 14.85,
+        "rssMiB": 1064.76171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 98462,
+        "cpuSec": 15.05,
+        "rssMiB": 1062.5,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 100470,
+        "cpuSec": 15.18,
+        "rssMiB": 1062.6484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 102478,
+        "cpuSec": 15.4,
+        "rssMiB": 1062.71875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 104486,
+        "cpuSec": 15.42,
+        "rssMiB": 1062.57421875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 106494,
+        "cpuSec": 15.48,
+        "rssMiB": 1038.65625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 108503,
+        "cpuSec": 15.73,
+        "rssMiB": 1042.16015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 110510,
+        "cpuSec": 15.850000000000001,
+        "rssMiB": 1041.62890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 112519,
+        "cpuSec": 16.06,
+        "rssMiB": 1042.48046875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 114527,
+        "cpuSec": 16.19,
+        "rssMiB": 1046.171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 116535,
+        "cpuSec": 16.48,
+        "rssMiB": 1048.76953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 118545,
+        "cpuSec": 16.59,
+        "rssMiB": 1049.38671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 120553,
+        "cpuSec": 16.9,
+        "rssMiB": 1050.015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 122561,
+        "cpuSec": 17.07,
+        "rssMiB": 1051.81640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 124569,
+        "cpuSec": 17.37,
+        "rssMiB": 1050.87109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 126577,
+        "cpuSec": 17.77,
+        "rssMiB": 1053.3671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 128587,
+        "cpuSec": 17.89,
+        "rssMiB": 1053.140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 130597,
+        "cpuSec": 18.19,
+        "rssMiB": 1059.0078125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 132606,
+        "cpuSec": 18.31,
+        "rssMiB": 1061.734375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 134615,
+        "cpuSec": 18.56,
+        "rssMiB": 1064.6953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 136624,
+        "cpuSec": 18.75,
+        "rssMiB": 1065.31640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 138631,
+        "cpuSec": 19.08,
+        "rssMiB": 1065.40625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 140640,
+        "cpuSec": 19.29,
+        "rssMiB": 1067.3984375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 142648,
+        "cpuSec": 19.33,
+        "rssMiB": 1066.546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 144657,
+        "cpuSec": 19.58,
+        "rssMiB": 1070.0390625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 146666,
+        "cpuSec": 19.68,
+        "rssMiB": 1070.046875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 148675,
+        "cpuSec": 19.71,
+        "rssMiB": 1068.77734375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 150685,
+        "cpuSec": 19.79,
+        "rssMiB": 1069.78515625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 152694,
+        "cpuSec": 20,
+        "rssMiB": 1069.7890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 154701,
+        "cpuSec": 20.08,
+        "rssMiB": 1069.44921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 156709,
+        "cpuSec": 20.19,
+        "rssMiB": 1070.2421875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 158718,
+        "cpuSec": 20.45,
+        "rssMiB": 1069.94140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 160726,
+        "cpuSec": 20.6,
+        "rssMiB": 1071.1015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 162735,
+        "cpuSec": 20.69,
+        "rssMiB": 1072.015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 164744,
+        "cpuSec": 20.9,
+        "rssMiB": 1071.4296875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 166752,
+        "cpuSec": 20.93,
+        "rssMiB": 1069.87109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 168761,
+        "cpuSec": 21.05,
+        "rssMiB": 1070.74609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 170769,
+        "cpuSec": 21.1,
+        "rssMiB": 1071.0703125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 172778,
+        "cpuSec": 21.35,
+        "rssMiB": 1071.171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 174785,
+        "cpuSec": 21.65,
+        "rssMiB": 1070.73046875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 176793,
+        "cpuSec": 21.78,
+        "rssMiB": 1072.796875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 178802,
+        "cpuSec": 21.8,
+        "rssMiB": 1072.4609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 180810,
+        "cpuSec": 22.08,
+        "rssMiB": 1072.3125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 182819,
+        "cpuSec": 22.38,
+        "rssMiB": 1072.58984375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 184828,
+        "cpuSec": 22.52,
+        "rssMiB": 1072.0390625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 186836,
+        "cpuSec": 22.59,
+        "rssMiB": 1072.90234375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 188845,
+        "cpuSec": 22.85,
+        "rssMiB": 1072.23828125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 190854,
+        "cpuSec": 23.01,
+        "rssMiB": 1073.69921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 192862,
+        "cpuSec": 23.27,
+        "rssMiB": 1072.80078125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 194871,
+        "cpuSec": 23.37,
+        "rssMiB": 1073,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 196879,
+        "cpuSec": 23.7,
+        "rssMiB": 1073.94921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 198886,
+        "cpuSec": 23.99,
+        "rssMiB": 1074.171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 200895,
+        "cpuSec": 24.09,
+        "rssMiB": 1076.4921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 202904,
+        "cpuSec": 24.38,
+        "rssMiB": 1086.0390625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 204911,
+        "cpuSec": 24.57,
+        "rssMiB": 1087.671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 206919,
+        "cpuSec": 24.6,
+        "rssMiB": 1086.15234375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 208927,
+        "cpuSec": 24.92,
+        "rssMiB": 1087.89453125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 210936,
+        "cpuSec": 25.25,
+        "rssMiB": 1088.16015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 212944,
+        "cpuSec": 25.36,
+        "rssMiB": 1087.92578125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 214955,
+        "cpuSec": 25.43,
+        "rssMiB": 1087.40625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 216963,
+        "cpuSec": 25.46,
+        "rssMiB": 1087.39453125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 218971,
+        "cpuSec": 25.53,
+        "rssMiB": 1089.33203125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 220979,
+        "cpuSec": 25.85,
+        "rssMiB": 1099.671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 222988,
+        "cpuSec": 26,
+        "rssMiB": 1100.359375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 224997,
+        "cpuSec": 26.08,
+        "rssMiB": 1100.44140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 227006,
+        "cpuSec": 26.39,
+        "rssMiB": 1101.88671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 229014,
+        "cpuSec": 26.46,
+        "rssMiB": 1100.328125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 231022,
+        "cpuSec": 26.73,
+        "rssMiB": 1100.91015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 233031,
+        "cpuSec": 26.8,
+        "rssMiB": 1101.35546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 235041,
+        "cpuSec": 26.86,
+        "rssMiB": 1100.32421875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 237050,
+        "cpuSec": 27.18,
+        "rssMiB": 1101.140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 239059,
+        "cpuSec": 27.21,
+        "rssMiB": 1101.1640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 241068,
+        "cpuSec": 27.26,
+        "rssMiB": 1101.078125,
+        "procs": 8
+      }
+    ]
+  },
+  {
+    "label": "pkc-0.0.94",
+    "round": 2,
+    "query": "",
+    "coldMs": 60000,
+    "windowMs": 180000,
+    "coldCpuSec": 11.62,
+    "steadyCpuSec": 15.53,
+    "steadyCpuPct": 8.6,
+    "peakRssMiB": 1255,
+    "endRssMiB": 1095,
+    "rssGrowthMiB": 43,
+    "jsHeapMiB": 67.9,
+    "jsHeapGrowthMiB": 3.8,
+    "rendererTaskSecCold": 5,
+    "rendererTaskSecSteady": 6.22,
+    "rendererScriptSecSteady": 0.63,
+    "steadyFetchCalls": 350,
+    "steadyFetchPerMin": 116.7,
+    "steadyFetch": {
+      "calls": 350,
+      "ok": 196,
+      "aborted": 154,
+      "failed": 0,
+      "bySource": {
+        "pubsub-voting": 0,
+        "pkc-js": 350,
+        "this page": 0,
+        "unknown": 0
+      },
+      "peers": 7,
+      "topPeerCalls": 449,
+      "updateIntervalMs": 60000
+    },
+    "fetchCold": {
+      "total": 125,
+      "bySource": {
+        "pubsub-voting": 25,
+        "pkc-js": 99,
+        "this page": 1,
+        "unknown": 0
+      },
+      "ok": 91,
+      "aborted": 14,
+      "failed": 20,
+      "peers": 7,
+      "updateIntervalMs": 60000,
+      "topPeer": 99
+    },
+    "fetchEnd": {
+      "total": 475,
+      "bySource": {
+        "pubsub-voting": 25,
+        "pkc-js": 449,
+        "this page": 1,
+        "unknown": 0
+      },
+      "ok": 287,
+      "aborted": 168,
+      "failed": 20,
+      "peers": 7,
+      "updateIntervalMs": 60000,
+      "topPeer": 449
+    },
+    "healthCounts": {
+      "buffered": 761,
+      "saturated": false,
+      "windowSpanMs": 18862,
+      "eventsPerSec": 40.3,
+      "communitiesLoaded": 64,
+      "connOpen": 6,
+      "connClose": 0,
+      "joinsDone": 64,
+      "joinsFailed": 0,
+      "tallies": 64,
+      "fetchStart": 0,
+      "subscriptionChange": 5,
+      "byKind": [
+        [
+          "community-state",
+          192
+        ],
+        [
+          "ipns",
+          128
+        ],
+        [
+          "join-start",
+          64
+        ],
+        [
+          "join-done",
+          64
+        ],
+        [
+          "first-tally",
+          64
+        ],
+        [
+          "community-create-start",
+          64
+        ],
+        [
+          "community-created",
+          64
+        ],
+        [
+          "community-loaded",
+          64
+        ]
+      ]
+    },
+    "steadyCounts": {
+      "buffered": 1990,
+      "saturated": false,
+      "windowSpanMs": 240887,
+      "eventsPerSec": 8.3,
+      "communitiesLoaded": 64,
+      "connOpen": 6,
+      "connClose": 0,
+      "joinsDone": 64,
+      "joinsFailed": 0,
+      "tallies": 64,
+      "fetchStart": 0,
+      "subscriptionChange": 5,
+      "byKind": [
+        [
+          "ipns",
+          898
+        ],
+        [
+          "community-state",
+          632
+        ],
+        [
+          "join-start",
+          64
+        ],
+        [
+          "join-done",
+          64
+        ],
+        [
+          "first-tally",
+          64
+        ],
+        [
+          "community-create-start",
+          64
+        ],
+        [
+          "community-created",
+          64
+        ],
+        [
+          "community-loaded",
+          64
+        ]
+      ]
+    },
+    "procs": 8,
+    "pageErrors": [],
+    "samples": [
+      {
+        "tag": "cold",
+        "atMs": 2024,
+        "cpuSec": 2.3200000000000003,
+        "rssMiB": 989.82421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 4033,
+        "cpuSec": 6.1,
+        "rssMiB": 1174.6953125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 6042,
+        "cpuSec": 8.23,
+        "rssMiB": 1255.40234375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 8050,
+        "cpuSec": 8.31,
+        "rssMiB": 1253.99609375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 10059,
+        "cpuSec": 8.37,
+        "rssMiB": 1253.0625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 12069,
+        "cpuSec": 8.48,
+        "rssMiB": 1253.4296875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 14077,
+        "cpuSec": 8.75,
+        "rssMiB": 1207.12109375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 16084,
+        "cpuSec": 8.84,
+        "rssMiB": 1207.5546875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 18092,
+        "cpuSec": 8.87,
+        "rssMiB": 1208.59765625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 20100,
+        "cpuSec": 8.91,
+        "rssMiB": 1208.99609375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 22114,
+        "cpuSec": 8.97,
+        "rssMiB": 1208.43359375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 24123,
+        "cpuSec": 9.049999999999999,
+        "rssMiB": 1207.5078125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 26133,
+        "cpuSec": 9.1,
+        "rssMiB": 1207.9375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 28140,
+        "cpuSec": 9.14,
+        "rssMiB": 1208.04296875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 30148,
+        "cpuSec": 9.34,
+        "rssMiB": 1165.16796875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 32157,
+        "cpuSec": 9.4,
+        "rssMiB": 1164.71484375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 34167,
+        "cpuSec": 9.49,
+        "rssMiB": 1164.16015625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 36176,
+        "cpuSec": 9.54,
+        "rssMiB": 1163.78125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 38185,
+        "cpuSec": 9.92,
+        "rssMiB": 1026.03125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 40193,
+        "cpuSec": 10.03,
+        "rssMiB": 1029.30859375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 42201,
+        "cpuSec": 10.07,
+        "rssMiB": 1030.17578125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 44210,
+        "cpuSec": 10.07,
+        "rssMiB": 1030.03515625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 46220,
+        "cpuSec": 10.129999999999999,
+        "rssMiB": 1031.2421875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 48229,
+        "cpuSec": 10.14,
+        "rssMiB": 1031.3515625,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 50238,
+        "cpuSec": 10.37,
+        "rssMiB": 1034.55859375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 52246,
+        "cpuSec": 10.56,
+        "rssMiB": 1038.24609375,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 54256,
+        "cpuSec": 10.89,
+        "rssMiB": 1044.8671875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 56263,
+        "cpuSec": 11.18,
+        "rssMiB": 1053.546875,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 58272,
+        "cpuSec": 11.41,
+        "rssMiB": 1054.39453125,
+        "procs": 8
+      },
+      {
+        "tag": "cold",
+        "atMs": 60282,
+        "cpuSec": 11.62,
+        "rssMiB": 1052.5546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 62299,
+        "cpuSec": 11.89,
+        "rssMiB": 1051.94140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 64307,
+        "cpuSec": 12.15,
+        "rssMiB": 1055,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 66315,
+        "cpuSec": 12.36,
+        "rssMiB": 1053.1328125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 68324,
+        "cpuSec": 12.67,
+        "rssMiB": 1057.13671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 70331,
+        "cpuSec": 13.03,
+        "rssMiB": 1057.08203125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 72340,
+        "cpuSec": 13.4,
+        "rssMiB": 1061.56640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 74348,
+        "cpuSec": 13.61,
+        "rssMiB": 1064.79296875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 76357,
+        "cpuSec": 14.049999999999999,
+        "rssMiB": 1071.01171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 78367,
+        "cpuSec": 14.22,
+        "rssMiB": 1070.28515625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 80376,
+        "cpuSec": 14.36,
+        "rssMiB": 1071.5625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 82384,
+        "cpuSec": 14.39,
+        "rssMiB": 1071.23828125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 84393,
+        "cpuSec": 14.42,
+        "rssMiB": 1071.3125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 86402,
+        "cpuSec": 14.459999999999999,
+        "rssMiB": 1071.91796875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 88411,
+        "cpuSec": 14.49,
+        "rssMiB": 1072.16015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 90419,
+        "cpuSec": 14.54,
+        "rssMiB": 1072.45703125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 92428,
+        "cpuSec": 14.74,
+        "rssMiB": 1070.60546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 94437,
+        "cpuSec": 14.82,
+        "rssMiB": 1070.6953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 96445,
+        "cpuSec": 14.93,
+        "rssMiB": 1071.8828125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 98454,
+        "cpuSec": 15.27,
+        "rssMiB": 1083.4609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 100462,
+        "cpuSec": 15.45,
+        "rssMiB": 1082.99609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 102469,
+        "cpuSec": 15.49,
+        "rssMiB": 1083.0546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 104479,
+        "cpuSec": 15.58,
+        "rssMiB": 1082.94140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 106488,
+        "cpuSec": 15.78,
+        "rssMiB": 1080.64453125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 108498,
+        "cpuSec": 15.889999999999999,
+        "rssMiB": 1073.65625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 110507,
+        "cpuSec": 15.930000000000001,
+        "rssMiB": 1073.76171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 112516,
+        "cpuSec": 15.979999999999999,
+        "rssMiB": 1073.4296875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 114523,
+        "cpuSec": 16.270000000000003,
+        "rssMiB": 1075.046875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 116532,
+        "cpuSec": 16.39,
+        "rssMiB": 1072.1328125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 118540,
+        "cpuSec": 16.520000000000003,
+        "rssMiB": 1073.66015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 120549,
+        "cpuSec": 16.930000000000003,
+        "rssMiB": 1074.921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 122559,
+        "cpuSec": 17.05,
+        "rssMiB": 1075.859375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 124568,
+        "cpuSec": 17.270000000000003,
+        "rssMiB": 1083.21484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 126576,
+        "cpuSec": 17.610000000000003,
+        "rssMiB": 1096.24609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 128585,
+        "cpuSec": 17.740000000000002,
+        "rssMiB": 1101.8984375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 130594,
+        "cpuSec": 18.01,
+        "rssMiB": 1025.2109375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 132603,
+        "cpuSec": 18.28,
+        "rssMiB": 1033.78125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 134612,
+        "cpuSec": 18.360000000000003,
+        "rssMiB": 1033.01953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 136621,
+        "cpuSec": 18.540000000000003,
+        "rssMiB": 1040.81640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 138630,
+        "cpuSec": 18.650000000000002,
+        "rssMiB": 1043.140625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 140639,
+        "cpuSec": 18.94,
+        "rssMiB": 1045.29296875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 142647,
+        "cpuSec": 19.14,
+        "rssMiB": 1052.40234375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 144656,
+        "cpuSec": 19.19,
+        "rssMiB": 1052.9921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 146665,
+        "cpuSec": 19.41,
+        "rssMiB": 1053.45703125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 148674,
+        "cpuSec": 19.42,
+        "rssMiB": 1052.2265625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 150682,
+        "cpuSec": 19.51,
+        "rssMiB": 1053.375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 152690,
+        "cpuSec": 19.57,
+        "rssMiB": 1054.0390625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 154699,
+        "cpuSec": 19.770000000000003,
+        "rssMiB": 1022.05859375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 156708,
+        "cpuSec": 19.84,
+        "rssMiB": 1021.9921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 158718,
+        "cpuSec": 19.87,
+        "rssMiB": 1022.1015625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 160726,
+        "cpuSec": 19.990000000000002,
+        "rssMiB": 1027.01171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 162735,
+        "cpuSec": 20.240000000000002,
+        "rssMiB": 1031.08984375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 164745,
+        "cpuSec": 20.37,
+        "rssMiB": 1032.96484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 166754,
+        "cpuSec": 20.430000000000003,
+        "rssMiB": 1035.5625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 168764,
+        "cpuSec": 20.62,
+        "rssMiB": 1038.6484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 170773,
+        "cpuSec": 20.71,
+        "rssMiB": 1038.5625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 172784,
+        "cpuSec": 21.080000000000002,
+        "rssMiB": 1040.83203125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 174792,
+        "cpuSec": 21.16,
+        "rssMiB": 1042.6640625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 176801,
+        "cpuSec": 21.450000000000003,
+        "rssMiB": 1048.62890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 178811,
+        "cpuSec": 21.6,
+        "rssMiB": 1053.1171875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 180820,
+        "cpuSec": 21.790000000000003,
+        "rssMiB": 1058.21484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 182830,
+        "cpuSec": 22.060000000000002,
+        "rssMiB": 1058.2734375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 184837,
+        "cpuSec": 22.200000000000003,
+        "rssMiB": 1058.96484375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 186846,
+        "cpuSec": 22.46,
+        "rssMiB": 1058.33203125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 188854,
+        "cpuSec": 22.490000000000002,
+        "rssMiB": 1058.18359375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 190863,
+        "cpuSec": 22.810000000000002,
+        "rssMiB": 1057.8203125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 192872,
+        "cpuSec": 23.220000000000002,
+        "rssMiB": 1065.30859375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 194881,
+        "cpuSec": 23.290000000000003,
+        "rssMiB": 1065.0703125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 196891,
+        "cpuSec": 23.430000000000003,
+        "rssMiB": 1070.515625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 198899,
+        "cpuSec": 23.790000000000003,
+        "rssMiB": 1081.4609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 200907,
+        "cpuSec": 23.96,
+        "rssMiB": 1081.59765625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 202915,
+        "cpuSec": 24.270000000000003,
+        "rssMiB": 1078.421875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 204926,
+        "cpuSec": 24.380000000000003,
+        "rssMiB": 1078.9921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 206934,
+        "cpuSec": 24.450000000000003,
+        "rssMiB": 1078.98828125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 208943,
+        "cpuSec": 24.540000000000003,
+        "rssMiB": 1078.6953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 210953,
+        "cpuSec": 24.770000000000003,
+        "rssMiB": 1078.23828125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 212961,
+        "cpuSec": 24.87,
+        "rssMiB": 1077.7890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 214971,
+        "cpuSec": 25.1,
+        "rssMiB": 1078.671875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 216980,
+        "cpuSec": 25.14,
+        "rssMiB": 1078.4609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 218990,
+        "cpuSec": 25.23,
+        "rssMiB": 1078.3984375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 220999,
+        "cpuSec": 25.580000000000002,
+        "rssMiB": 1079.6796875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 223008,
+        "cpuSec": 25.66,
+        "rssMiB": 1079.2890625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 225016,
+        "cpuSec": 25.880000000000003,
+        "rssMiB": 1078.60546875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 227025,
+        "cpuSec": 25.96,
+        "rssMiB": 1079.4921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 229035,
+        "cpuSec": 26.020000000000003,
+        "rssMiB": 1078.1328125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 231043,
+        "cpuSec": 26.05,
+        "rssMiB": 1078.76953125,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 233052,
+        "cpuSec": 26.310000000000002,
+        "rssMiB": 1082.609375,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 235062,
+        "cpuSec": 26.630000000000003,
+        "rssMiB": 1085.25390625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 237071,
+        "cpuSec": 26.73,
+        "rssMiB": 1085.4921875,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 239080,
+        "cpuSec": 26.880000000000003,
+        "rssMiB": 1092.5625,
+        "procs": 8
+      },
+      {
+        "tag": "steady",
+        "atMs": 241089,
+        "cpuSec": 27.150000000000002,
+        "rssMiB": 1095.1015625,
+        "procs": 8
+      }
+    ]
+  }
+]
