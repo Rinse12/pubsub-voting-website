@@ -101,7 +101,7 @@ shared/    directory-manifest.{json,ts} (GENERATED — defines all 64 contests A
            resolvers, wire-log decoders
 src/       the website: pkc-js boot (the one shared Helia node), injected+burner
            wallet signer, directory overview + per-directory voting UI,
-           leader-community loader, benchmarks panel
+           leader-community loader, benchmarks + libp2p-fetch traffic panels
 scripts/   generate-directory-manifest.ts — regenerate the manifest from the lists
            repo (npm run manifest); derive-topic.ts — validate every contest +
            print all topics (npm run topic); coldstart-bench.mjs — how long until
@@ -193,6 +193,32 @@ that raced the seeder's subscription exchange synced nothing and waited ~10 minu
 fresh tab. Fixed upstream in 0.0.10 (pubsub-voting #15): the cold-start pull re-arms on
 gossipsub `subscription-change` for the first heartbeat interval after join, so this
 site uses the library as-is with no join-ordering workaround.
+
+### Diagnosing "why does it keep fetching?"
+
+The page's **libp2p-fetch traffic** panel counts every call on the shared
+`/libp2p/fetch/0.0.1` service per peer and attributes each to its caller, because one
+service carries two consumers with completely different cadences, and the log used to
+label both "checkpoint fetch":
+
+- **pubsub-voting** — `<topic>/root`, or the one bulk key that replaces 63 of them. It is
+  fetch-once-then-listen: one pull per peer at `join()` plus a bounded re-pull window, and
+  from then on divergence rides the 10-minute gossip root heartbeat and bitswap. Measured
+  on a fresh tab: **5 calls, ever**.
+- **pkc-js** — one IPNS record fan-out per updating community whenever its safety-net tick
+  forces a network revalidation: every `pkc.updateInterval` (60 s), floored at 30 s by
+  `FORCED_IPNS_NETWORK_REVALIDATION_MIN_INTERVAL_MS`. The page updates the leaderboard #1
+  community of **all 64 directories**, so that is ~64 fan-outs a minute, each asking every
+  subscriber and provider at once and aborting the losers the instant one answers.
+  Measured on the same tab: **~110 calls/min, ~45% of them aborted** — the aborts are the
+  race working, not the vote sync failing.
+
+So a steady stream of `ipns record fetch aborted: signal is aborted without reason` is
+normal. A steady stream on the *pubsub-voting* rows is not — that means something is
+re-joining topics. The panel prints `updateInterval`, the number of communities updating
+and the fan-out rate that implies, so an unexpected rate shows up as a discrepancy; a
+per-minute summary line goes to the log, and `window.__fetchStats()` returns the same
+counters for a Playwright driver.
 
 ### Changing the contest rules
 

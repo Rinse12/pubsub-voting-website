@@ -71,6 +71,52 @@
                 </div>
             </section>
 
+            <section class="card" id="fetch-card">
+                <h2>libp2p-fetch traffic</h2>
+                <p class="hint">
+                    One <code>/libp2p/fetch/0.0.1</code> service, two consumers — counted apart here because
+                    they behave nothing alike. <strong>Checkpoint roots</strong> are this page's vote sync
+                    (<code>&lt;topic&gt;/root</code>): one pull per peer per contest when it joins, and then
+                    never again — divergence after that rides the gossip root heartbeat and bitswap, not
+                    fetch. <strong>IPNS records</strong> are pkc-js resolving the communities it is updating:
+                    each one re-validates against the network on the interval below, and each revalidation
+                    asks <em>every</em> subscriber and provider at once and aborts the losers as soon as one
+                    answers — so most aborts on those rows are a healthy resolve, not a failure.
+                </p>
+                <dl class="kv">
+                    <dt>By caller</dt>
+                    <dd id="fetch-by-source">—</dd>
+                    <dt>pkc-js updateInterval</dt>
+                    <dd id="fetch-update-interval">—</dd>
+                    <dt>Fetches</dt>
+                    <dd id="fetch-total">0</dd>
+                </dl>
+                <div class="scroll-y">
+                    <table id="fetch-table" hidden>
+                        <thead>
+                            <tr>
+                                <th>Peer</th><th>Calls</th>
+                                <th title="Checkpoint root records — @bitsocial/pubsub-voting">pubsub&#8209;voting</th>
+                                <th title="IPNS record resolves — @pkcprotocol/pkc-js">pkc&#8209;js</th>
+                                <th title="This page's own seeder peer-hint fetch, and anything unrecognised">other</th>
+                                <th>ok</th><th>aborted</th><th>failed</th><th>last 60&nbsp;s</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fetch-body"></tbody>
+                    </table>
+                </div>
+                <p class="hint" id="fetch-hint">no fetches yet</p>
+                <details id="fetch-names-details">
+                    <summary id="fetch-names-summary">IPNS names fetched (0)</summary>
+                    <p class="hint">
+                        Which name pkc-js is re-resolving, and how many fetches this tab has spent on it since
+                        the page loaded. A board's community address is its public key, so a name that keeps
+                        climbing is a leaderboard #1 whose record is being revalidated on every interval.
+                    </p>
+                    <pre id="fetch-names">none yet</pre>
+                </details>
+            </section>
+
             <section class="card" id="wallet-card">
                 <h2>Wallet</h2>
                 <p class="hint">

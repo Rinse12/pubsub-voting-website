@@ -27,6 +27,8 @@ import { startPkcNode, keepSeederConnected, seederPeerIds, type Pkc } from "./no
 import { PREWARM_HINT_FETCH_KEY, PREWARM_HINT_TIMEOUT_MS, PREWARM_HINT_MAX_PEERS, PREWARM_HINT_MAX_ADDRS } from "./config.js";
 import { multiaddr } from "@multiformats/multiaddr";
 import { CID } from "multiformats/cid";
+import { decode as digestDecode } from "multiformats/hashes/digest";
+import { base36 } from "multiformats/bases/base36";
 import { BrowserWalletSigner } from "./signer.js";
 
 /* ---------- tiny DOM helpers ---------- */
@@ -258,10 +260,332 @@ declare global {
     interface Window {
         __phases: PhaseEvent[];
         __bench: { label: string; tookMs: number; doneAtMs: number }[];
+        /** Per-peer libp2p-fetch counters, for the benchmark drivers (see the accounting
+         * block below). A function, not the maps: it is read after the fact and must be a
+         * snapshot rather than live objects the page keeps mutating. */
+        __fetchStats: () => {
+            total: number;
+            bySource: Record<string, number>;
+            updateIntervalMs: number | undefined;
+            peers: { peer: string; calls: number; ok: number; aborted: number; failed: number; byKind: Record<string, number> }[];
+            names: { name: string; calls: number }[];
+        };
     }
 }
 window.__phases = phases;
 window.__bench = benchRows;
+
+/* ---------- libp2p-fetch accounting (per peer, per kind) ----------
+ * ONE `/libp2p/fetch/0.0.1` service, two consumers with completely different cadences —
+ * and until this panel existed the wrapper below labelled every call on it "checkpoint
+ * fetch", which is how a log full of pkc-js's IPNS race-losers read as the vote sync
+ * failing over and over. Counted apart here, per peer:
+ *
+ *   - **checkpoint roots** (`@bitsocial/pubsub-voting`): `<topic>/root`, or the bulk key
+ *     that replaces 63 of them. Fetch-once-then-listen — one pull per peer per contest at
+ *     `join()`, re-armed only for the bounded re-pull window after it; past that,
+ *     divergence is carried by the 10-minute gossip root heartbeat and pulled over
+ *     bitswap, never over fetch again. A steady drip on these rows means something is
+ *     re-joining.
+ *   - **IPNS records** (pkc-js): one `directFetchIpnsRecordFromProviders` fan-out per
+ *     updating community each time its safety-net tick forces a network revalidation —
+ *     every `pkc.updateInterval` (60 s by default), floored at 30 s
+ *     (`FORCED_IPNS_NETWORK_REVALIDATION_MIN_INTERVAL_MS`). The fan-out asks EVERY topic
+ *     subscriber and every discovered provider in parallel and aborts the losers the
+ *     instant one returns a valid record, so a perfectly healthy resolve produces one hit
+ *     and N-1 aborts. That is why aborted has its own column instead of counting as a
+ *     failure: on the IPNS rows it is the design working.
+ *
+ * Bounded like every other observation panel here (see the bundles cap and issue #3): the
+ * rolling window is pruned on write, and both maps are capped. */
+type FetchKind = "root" | "bulk" | "ipns" | "prewarm" | "other";
+const FETCH_KIND_LABEL: Record<FetchKind, string> = {
+    root: "checkpoint root",
+    bulk: "checkpoint roots (bulk)",
+    ipns: "ipns record",
+    prewarm: "seeder peer hint",
+    other: "fetch"
+};
+/** Who made the call — the split the panel leads with, because "is the vote sync or the
+ * community loader doing this?" is the first question any burst of fetch traffic raises.
+ * Every kind is attributable: the two checkpoint keys are the library's, an IPNS routing key
+ * is pkc-js's, the seeder peer-hint key is this page's own pre-warm (see config.ts), and an
+ * unrecognised key is left as unknown rather than guessed at. */
+type FetchSource = "pubsub-voting" | "pkc-js" | "this page" | "unknown";
+const FETCH_SOURCE: Record<FetchKind, FetchSource> = {
+    root: "pubsub-voting",
+    bulk: "pubsub-voting",
+    ipns: "pkc-js",
+    prewarm: "this page",
+    other: "unknown"
+};
+const FETCH_SOURCES: FetchSource[] = ["pubsub-voting", "pkc-js", "this page", "unknown"];
+/** pkc-js's floor on how often a safety-net tick may force a network IPNS revalidation
+ * (`FORCED_IPNS_NETWORK_REVALIDATION_MIN_INTERVAL_MS` in its community-client-manager).
+ * Mirrored here only to state the expected cadence in the panel. */
+const IPNS_FORCED_REVALIDATION_FLOOR_MS = 30_000;
+/** Window the per-peer rate and the periodic summary line are computed over. */
+const FETCH_RATE_WINDOW_MS = 60_000;
+const FETCH_PEER_LIMIT = 200; // peers churn over a long-lived tab; keep the hot ones
+const FETCH_NAME_LIMIT = 200; // distinct IPNS names asked for
+const FETCH_EVENT_LIMIT = 5_000; // hard cap under the window, for a pathological burst
+
+interface FetchPeerStat {
+    calls: number;
+    ok: number;
+    aborted: number;
+    failed: number;
+    bytes: number;
+    byKind: Record<FetchKind, number>;
+    lastAt: number;
+}
+/** One row per in-window call, so the rate and the summary can be broken down by kind and
+ * outcome. `outcome` is filled in when the call settles — the object is handed back to the
+ * wrapper for exactly that. */
+interface FetchEvent {
+    at: number;
+    peer: string;
+    kind: FetchKind;
+    outcome: "pending" | "ok" | "aborted" | "failed";
+}
+const fetchStats = new Map<string, FetchPeerStat>(); // peer id → lifetime counters
+const fetchByName = new Map<string, number>(); // IPNS name (k51…) → lifetime calls
+const recentFetches: FetchEvent[] = [];
+/** Lifetime calls per caller. Kept as its own tally rather than summed from `fetchStats`,
+ * which is LRU-capped and would undercount once peers start being evicted. */
+const fetchBySource: Record<FetchSource, number> = { "pubsub-voting": 0, "pkc-js": 0, "this page": 0, unknown: 0 };
+let fetchTotal = 0;
+/** pkc-js's community update interval, read off the instance at boot (avoids a TDZ read of
+ * `pkc` from a render that can run before `main()` assigns it). */
+let pkcUpdateIntervalMs: number | undefined;
+
+/** `/ipns/<multihash>` → the k51… name, so an IPNS row says WHICH community is re-resolving
+ * rather than showing the routing key's bytes mangled through a utf8 decode. */
+const IPNS_KEY_PREFIX = new TextEncoder().encode("/ipns/");
+const LIBP2P_KEY_CODEC = 0x72;
+function ipnsNameFromKey(key: Uint8Array): string | undefined {
+    if (key.length <= IPNS_KEY_PREFIX.length) return undefined;
+    for (let i = 0; i < IPNS_KEY_PREFIX.length; i++) if (key[i] !== IPNS_KEY_PREFIX[i]) return undefined;
+    try {
+        return CID.createV1(LIBP2P_KEY_CODEC, digestDecode(key.subarray(IPNS_KEY_PREFIX.length))).toString(base36);
+    } catch {
+        return undefined; // not a multihash after the prefix — fall through to the raw label
+    }
+}
+
+function classifyFetch(key: string | Uint8Array): { kind: FetchKind; label: string } {
+    const bytes = typeof key === "string" ? new TextEncoder().encode(key) : key;
+    const name = ipnsNameFromKey(bytes);
+    if (name !== undefined) return { kind: "ipns", label: name };
+    const keyStr = typeof key === "string" ? key : new TextDecoder().decode(key);
+    if (keyStr === "bitsocial-votes/roots") return { kind: "bulk", label: keyStr };
+    if (byTopic.has(keyStr.replace(/\/root$/, ""))) return { kind: "root", label: keyStr };
+    if (keyStr === PREWARM_HINT_FETCH_KEY) return { kind: "prewarm", label: keyStr };
+    return { kind: "other", label: keyStr };
+}
+
+/** An abort is not a failure on the IPNS rows (the fan-out aborts every loser) and is a
+ * timeout on ours, so the two are counted apart. Matches the shapes the fetch path throws:
+ * a DOMException from `signal.reason`, or a libp2p error whose name/message says aborted. */
+function isAbortError(error: unknown): boolean {
+    const err = error as { name?: string; message?: string } | undefined;
+    if (err?.name === "AbortError" || err?.name === "TimeoutError") return true;
+    return /abort|timed out|timeout/i.test(err?.message ?? "");
+}
+
+function noteFetchStart(peer: string, kind: FetchKind, label: string): FetchEvent {
+    const now = Date.now();
+    const stat = fetchStats.get(peer) ?? {
+        calls: 0,
+        ok: 0,
+        aborted: 0,
+        failed: 0,
+        bytes: 0,
+        byKind: { root: 0, bulk: 0, ipns: 0, prewarm: 0, other: 0 },
+        lastAt: now
+    };
+    // delete + set so the cap below evicts the least-recently-USED peer, not the first seen:
+    // a Map keeps insertion order, and re-setting an existing key would not move it.
+    fetchStats.delete(peer);
+    fetchStats.set(peer, stat);
+    stat.calls++;
+    stat.byKind[kind]++;
+    stat.lastAt = now;
+    capOldest(fetchStats, FETCH_PEER_LIMIT);
+    if (kind === "ipns") {
+        fetchByName.set(label, (fetchByName.get(label) ?? 0) + 1);
+        capOldest(fetchByName, FETCH_NAME_LIMIT);
+    }
+    fetchTotal++;
+    fetchBySource[FETCH_SOURCE[kind]]++;
+    const event: FetchEvent = { at: now, peer, kind, outcome: "pending" };
+    recentFetches.push(event);
+    pruneRecentFetches(now);
+    scheduleRenderFetch();
+    return event;
+}
+
+function noteFetchEnd(event: FetchEvent, outcome: "ok" | "aborted" | "failed", bytes = 0): void {
+    event.outcome = outcome;
+    const stat = fetchStats.get(event.peer);
+    if (stat) {
+        stat[outcome]++;
+        stat.bytes += bytes;
+    }
+    scheduleRenderFetch();
+}
+
+function pruneRecentFetches(now: number): void {
+    while (recentFetches.length > 0 && now - recentFetches[0]!.at > FETCH_RATE_WINDOW_MS) recentFetches.shift();
+    if (recentFetches.length > FETCH_EVENT_LIMIT) recentFetches.splice(0, recentFetches.length - FETCH_EVENT_LIMIT);
+}
+
+/** Calls in the last {@link FETCH_RATE_WINDOW_MS}, per peer — the number that says whether a
+ * row is a one-off cold-start pull or a standing cost. */
+function fetchRateByPeer(now: number): Map<string, number> {
+    const rate = new Map<string, number>();
+    for (const event of recentFetches) {
+        if (now - event.at > FETCH_RATE_WINDOW_MS) continue;
+        rate.set(event.peer, (rate.get(event.peer) ?? 0) + 1);
+    }
+    return rate;
+}
+
+let fetchTimer: ReturnType<typeof setTimeout> | undefined;
+/** A 63-contest cold pull settles dozens of fetches in the same tick; coalesce like the
+ * directory table does. */
+function scheduleRenderFetch() {
+    if (fetchTimer) return;
+    fetchTimer = setTimeout(() => {
+        fetchTimer = undefined;
+        renderFetchStats();
+    }, 250);
+}
+
+const fmtInterval = (ms: number) => (ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`);
+
+function renderFetchStats() {
+    const now = Date.now();
+    pruneRecentFetches(now);
+    // What the IPNS cadence should be, from pkc-js's own knobs, so an unexpected rate is
+    // visible as a discrepancy instead of needing the source open next to the log.
+    const updating = entries.filter((entry) => entry.leaderCommunity !== undefined).length;
+    const intervalEl = $("fetch-update-interval");
+    if (pkcUpdateIntervalMs === undefined) intervalEl.textContent = "—";
+    else {
+        const forcedMs = Math.max(pkcUpdateIntervalMs, IPNS_FORCED_REVALIDATION_FLOOR_MS);
+        const perMin = updating * (60_000 / forcedMs);
+        intervalEl.textContent =
+            `${fmtInterval(pkcUpdateIntervalMs)} · ${updating} ${updating === 1 ? "community" : "communities"} updating ` +
+            `⇒ ~${perMin.toFixed(1)} IPNS revalidation fan-out${perMin === 1 ? "" : "s"}/min, each asking every subscriber and provider at once`;
+    }
+
+    const rate = fetchRateByPeer(now);
+    const rows = [...fetchStats.entries()].sort((a, b) => b[1].calls - a[1].calls);
+    const totals = { ok: 0, aborted: 0, failed: 0, window: 0 };
+    const body = $("fetch-body");
+    body.textContent = "";
+    for (const [peer, stat] of rows) {
+        // Per row, the same split the totals lead with: the library's two checkpoint keys,
+        // pkc-js's IPNS records, and everything else (this page's own seeder peer hint).
+        const fromLibrary = stat.byKind.root + stat.byKind.bulk;
+        const fromPkc = stat.byKind.ipns;
+        const other = stat.byKind.prewarm + stat.byKind.other;
+        const inWindow = rate.get(peer) ?? 0;
+        totals.ok += stat.ok;
+        totals.aborted += stat.aborted;
+        totals.failed += stat.failed;
+        totals.window += inWindow;
+        const tr = document.createElement("tr");
+        const peerTd = document.createElement("td");
+        const peerCode = document.createElement("code");
+        peerCode.textContent = shortKey(peer);
+        peerCode.title = peer;
+        peerTd.appendChild(peerCode);
+        tr.appendChild(peerTd);
+        for (const text of [
+            String(stat.calls),
+            String(fromLibrary),
+            String(fromPkc),
+            String(other),
+            String(stat.ok),
+            String(stat.aborted),
+            String(stat.failed),
+            String(inWindow)
+        ]) {
+            const td = document.createElement("td");
+            td.textContent = text;
+            tr.appendChild(td);
+        }
+        body.appendChild(tr);
+    }
+    $("fetch-table").hidden = rows.length === 0;
+    $("fetch-hint").hidden = rows.length > 0;
+    // Who is making the calls, lifetime — the first thing to know about a burst of fetch
+    // traffic, and the one thing the per-call log lines could never say at a glance.
+    const callers = FETCH_SOURCES.filter((source) => fetchBySource[source] > 0)
+        .map((source) => `${fetchBySource[source]} ${source} (${((fetchBySource[source] / Math.max(1, fetchTotal)) * 100).toFixed(0)}%)`)
+        .join(" · ");
+    $("fetch-by-source").textContent = fetchTotal === 0 ? "—" : callers;
+    $("fetch-total").textContent =
+        fetchTotal === 0
+            ? "0"
+            : `${fetchTotal} calls to ${fetchStats.size} ${fetchStats.size === 1 ? "peer" : "peers"} — ` +
+              `${totals.ok} ok, ${totals.aborted} aborted, ${totals.failed} failed · ` +
+              `${totals.window} in the last ${FETCH_RATE_WINDOW_MS / 1000} s`;
+
+    // Which IPNS names are being re-resolved, and how often: the per-community half of the
+    // same question the per-peer table answers.
+    const names = [...fetchByName.entries()].sort((a, b) => b[1] - a[1]);
+    $("fetch-names-summary").textContent = `IPNS names fetched (${names.length})`;
+    if ($<HTMLDetailsElement>("fetch-names-details").open)
+        $("fetch-names").textContent = names.length === 0 ? "none yet" : names.map(([name, calls]) => `${calls}\t${name}`).join("\n");
+}
+
+/** One line a minute, only when there was traffic: the aggregate the per-call lines cannot
+ * give at a glance, and the answer to "why does this keep fetching?". */
+function logFetchSummary() {
+    const now = Date.now();
+    pruneRecentFetches(now);
+    if (recentFetches.length === 0) return;
+    const byKind = new Map<FetchKind, number>();
+    const outcomes = { ok: 0, aborted: 0, failed: 0, pending: 0 };
+    const peers = new Set<string>();
+    for (const event of recentFetches) {
+        byKind.set(event.kind, (byKind.get(event.kind) ?? 0) + 1);
+        outcomes[event.outcome]++;
+        peers.add(event.peer);
+    }
+    const bySource = new Map<FetchSource, number>();
+    for (const event of recentFetches) {
+        const source = FETCH_SOURCE[event.kind];
+        bySource.set(source, (bySource.get(source) ?? 0) + 1);
+    }
+    const callers = FETCH_SOURCES.filter((source) => bySource.has(source))
+        .map((source) => `${bySource.get(source)} ${source}`)
+        .join(", ");
+    const kinds = [...byKind.entries()].map(([kind, count]) => `${count} ${FETCH_KIND_LABEL[kind]}`).join(", ");
+    log(
+        `libp2p-fetch, last ${FETCH_RATE_WINDOW_MS / 1000} s: ${recentFetches.length} calls across ${peers.size} peer(s) — ` +
+            `by caller ${callers}; by key ${kinds}; ` +
+            `${outcomes.ok} ok, ${outcomes.aborted} aborted, ${outcomes.failed} failed, ${outcomes.pending} in flight`
+    );
+}
+
+window.__fetchStats = () => ({
+    total: fetchTotal,
+    bySource: { ...fetchBySource },
+    updateIntervalMs: pkcUpdateIntervalMs,
+    peers: [...fetchStats.entries()].map(([peer, stat]) => ({
+        peer,
+        calls: stat.calls,
+        ok: stat.ok,
+        aborted: stat.aborted,
+        failed: stat.failed,
+        byKind: { ...stat.byKind }
+    })),
+    names: [...fetchByName.entries()].map(([name, calls]) => ({ name, calls }))
+});
 
 /* ---------- downloaded vote bundles (debug panel) ----------
  * Every signed bundle this tab has admitted, by CID, across ALL contests, tagged with how
@@ -334,6 +658,7 @@ function addBundle({ cid, bundle }: DownloadedBundle, source: BundleSource) {
 
 // Expanding the panel is what pays for the JSON body; renderBundles() skips it while closed.
 $<HTMLDetailsElement>("bundles-details").addEventListener("toggle", () => renderBundles());
+$<HTMLDetailsElement>("fetch-names-details").addEventListener("toggle", () => renderFetchStats());
 
 /** One line of WHO voted for WHAT, from a decoded display bundle; best-effort. */
 function describeBundleContent(bundle: unknown): string {
@@ -773,6 +1098,7 @@ async function syncLeaderCommunity(entry: DirEntry) {
     // A dethroned leader's community stops syncing — one community per contest at a time.
     const previous = entry.leaderCommunity;
     entry.leaderCommunity = undefined;
+    scheduleRenderFetch(); // the expected IPNS fan-out rate is per updating community
     if (entry === selected) {
         $("community-info").hidden = true;
         $("community-details").hidden = true;
@@ -792,6 +1118,7 @@ async function syncLeaderCommunity(entry: DirEntry) {
         phase("community-created", entry.code, { tookMs: performance.now() - startedAt, label });
         if (entry.leaderKey !== key) return; // leader changed while constructing
         entry.leaderCommunity = community;
+        scheduleRenderFetch(); // one more community updating = one more IPNS revalidation a minute
         community.on("update", () => {
             if (entry.leaderKey !== key) return;
             if (!entry.leaderLoaded) {
@@ -1385,6 +1712,16 @@ async function main() {
     log(`starting pkc-js with its in-browser libp2p/Helia node (shared by community loading AND syncing ${entries.length} directory contests)…`);
     const { pkc: pkcInstance, helia } = await startPkcNode();
     pkc = pkcInstance;
+    // The cadence behind most of this tab's libp2p-fetch traffic: every community pkc-js is
+    // updating re-validates its IPNS record over the network every `updateInterval` (floored
+    // at 30 s), and each revalidation is a fan-out to every subscriber and provider at once.
+    pkcUpdateIntervalMs = pkc.updateInterval;
+    log(
+        `pkc-js updateInterval is ${fmtInterval(pkcUpdateIntervalMs)} — each updating community forces an IPNS network ` +
+            `revalidation about that often (floor ${fmtInterval(IPNS_FORCED_REVALIDATION_FLOOR_MS)}), and each one fetches from every ` +
+            `subscriber and provider in parallel, aborting the losers`
+    );
+    renderFetchStats();
     markBench("pkc-js ready (in-browser helia/libp2p node booted)");
 
     /* Pre-warm, discovery-driven (?prewarm=0 to disable): the first peers discovery connects us
@@ -1597,10 +1934,15 @@ async function main() {
         // A votes fetch is either the per-topic root key or the bulk key that replaces 63 of
         // them; anything else on this service is pkc-js's IPNS direct fetch. Classifying the
         // bulk key matters — without it the votes side of the timeline reads as zero traffic.
-        const isBulkRoots = keyStr === "bitsocial-votes/roots";
-        const isVoteRoot = isBulkRoots || byTopic.has(keyStr.replace(/\/root$/, ""));
-        phase("fetch-start", keyStr, { queuedMs: startedAt - enqueuedAt, isVoteRoot, isBulkRoots });
-        log(`checkpoint fetch → ${peer} ${keyStr}`);
+        // `label` is the readable identity of what was asked for: the fetch key for ours, the
+        // k51… name for pkc-js's (its routing key is bytes, not text).
+        const { kind, label } = classifyFetch(key);
+        const isBulkRoots = kind === "bulk";
+        const isVoteRoot = isBulkRoots || kind === "root";
+        const peerId = String(peer);
+        const event = noteFetchStart(peerId, kind, label);
+        phase("fetch-start", keyStr, { queuedMs: startedAt - enqueuedAt, isVoteRoot, isBulkRoots, kind, peer: peerId, label });
+        log(`${FETCH_KIND_LABEL[kind]} fetch → ${peer} ${label}`);
         if (!(opts as { signal?: AbortSignal } | undefined)?.signal)
             opts = { ...(opts ?? {}), signal: AbortSignal.timeout(60_000) };
         try {
@@ -1610,9 +1952,25 @@ async function main() {
                 entry.rootFetched = true;
                 scheduleRenderDirs();
             }
-            phase("fetch-done", keyStr, { wireMs: performance.now() - startedAt, isVoteRoot, isBulkRoots, bytes: value?.length ?? 0 });
-            log(`checkpoint fetch ← ${value === undefined ? "no value" : `${value.length} bytes: ${describeRootRecord(value)}`}`);
-            const record = value === undefined ? undefined : parseRootRecord(value);
+            noteFetchEnd(event, "ok", value?.length ?? 0);
+            phase("fetch-done", keyStr, {
+                wireMs: performance.now() - startedAt,
+                isVoteRoot,
+                isBulkRoots,
+                kind,
+                peer: peerId,
+                bytes: value?.length ?? 0
+            });
+            log(
+                `${FETCH_KIND_LABEL[kind]} fetch ← ${
+                    value === undefined ? "no value" : kind === "root" ? `${value.length} bytes: ${describeRootRecord(value)}` : `${value.length} bytes`
+                }`
+            );
+            // Only the single-root answer is decoded here: `parseRootRecord` reads one root
+            // record, and the bulk key answers with an envelope of 64 of them (it used to be
+            // handed those bytes and log them as "undecodable"). Chunks advertised in a bulk
+            // answer reach the bundles panel through the tally-driven refresh instead.
+            const record = value === undefined || kind !== "root" ? undefined : parseRootRecord(value);
             for (const chunk of record?.chunks ?? []) {
                 const key = chunk.toString();
                 if (!decodedChunks.has(key)) checkpointChunks.set(key, chunk);
@@ -1620,6 +1978,12 @@ async function main() {
             if (record?.chunks?.length) void refreshCheckpointBundles(helia.blockstore);
             return value;
         } catch (err) {
+            // An abort is only news on OUR rows (there it is the 60 s signal above expiring).
+            // pkc-js's IPNS fan-out aborts every loser the instant one peer answers, so an
+            // aborted ipns fetch is a healthy resolve, not a failure — say so, because a log
+            // full of bare "fetch failed: aborted" reads as the vote sync breaking.
+            const aborted = isAbortError(err);
+            noteFetchEnd(event, aborted ? "aborted" : "failed");
             // Truncated: these are @libp2p/fetch errors and short in practice, but a
             // retained error string is exactly how a client-side error can become a
             // memory problem (viem embeds whole RPC request bodies in `.message`).
@@ -1627,13 +1991,22 @@ async function main() {
                 wireMs: performance.now() - startedAt,
                 isVoteRoot,
                 isBulkRoots,
+                kind,
+                peer: peerId,
+                aborted,
                 error: (err as Error).message.slice(0, 500)
             });
-            log(`checkpoint fetch failed: ${(err as Error).message}`);
+            log(
+                `${FETCH_KIND_LABEL[kind]} fetch ${aborted ? "aborted" : "failed"}: ${(err as Error).message}` +
+                    (aborted && kind === "ipns" ? " (expected — pkc-js aborts every loser of its multi-peer race)" : "")
+            );
             throw err;
         }
         });
     };
+    // The per-call lines above cannot show a rate; this can, and it is the line that answers
+    // "why does it keep fetching?" without reading the whole log.
+    setInterval(logFetchSummary, FETCH_RATE_WINDOW_MS);
 
     /* Catch-all bundle tap: every CRDT admission path (live accept, chase, local publish,
      * snapshot restore) writes the standalone bundle block through this put, and the
