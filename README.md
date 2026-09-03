@@ -104,7 +104,9 @@ src/       the website: pkc-js boot (the one shared Helia node), injected+burner
            leader-community loader, benchmarks panel
 scripts/   generate-directory-manifest.ts — regenerate the manifest from the lists
            repo (npm run manifest); derive-topic.ts — validate every contest +
-           print all topics (npm run topic)
+           print all topics (npm run topic); coldstart-bench.mjs — how long until
+           the page is usable; cpu-bench.mjs — what the tab costs once it is
+           (results/COLDSTART.md, results/CPU.md)
 tests/     regression tests (npm test)
 ```
 
